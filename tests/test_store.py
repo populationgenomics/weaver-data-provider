@@ -323,6 +323,14 @@ def test_a_bundle_breaking_the_schema_is_refused_on_write(tmp_path: pathlib.Path
     assert list((tmp_path / 'shards').iterdir()) == []  # nothing half-written is left behind
 
 
+def test_a_protein_citing_a_sequence_its_bundle_does_not_carry_is_refused_on_write(tmp_path: pathlib.Path) -> None:
+    dangling = bundle_pb2.GeneBundle()
+    dangling.CopyFrom(_BUNDLES[0])
+    dangling.proteins[0].sequence_digest = refget.digest(b'NOTCARRIED')
+    with pytest.raises(build.BuildError, match='cites sequences it does not carry'):
+        store_build.write_shard([dangling], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))
+
+
 def test_a_bundle_citing_a_sequence_it_does_not_carry_is_refused_on_write(tmp_path: pathlib.Path) -> None:
     dangling = bundle_pb2.GeneBundle()
     dangling.CopyFrom(_BUNDLES[0])

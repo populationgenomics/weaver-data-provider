@@ -406,9 +406,21 @@ def test_a_cds_the_annotation_bounds_on_a_genome_only_base_is_the_records(tmp_pa
         transcripts={**TRANSCRIPTS, 'NM_000010.2': record},
         record_cds={**RECORD_CDS, 'NM_000010.2': '5..29'},
     )
-    with pytest.warns(build.BuildWarning, match='does not project: .*genome position 104 is a genome-only base'):
-        (transcript,) = _by_symbol(release)['PLUS'].transcripts
+    (transcript,) = _quietly(release)['PLUS'].transcripts
     assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (4, 28)
+
+
+def test_an_annotation_cds_that_does_not_project_warns(tmp_path: pathlib.Path) -> None:
+    record = _g(CHROM, 101, 104) + _g(CHROM, 106, 120) + _g(CHROM, 201, 230)
+    deleting = Read('NM_000010.2', CHROM, 100, '4=1D15=80N30=', False, record)
+    release = _release(
+        tmp_path,
+        reads=[deleting if r.name == 'NM_000010.2' else r for r in READS],
+        transcripts={**TRANSCRIPTS, 'NM_000010.2': record},
+        record_cds={**RECORD_CDS, 'NM_000010.2': '5..29'},
+    )
+    with pytest.warns(build.BuildWarning, match='does not project: .*genome position 104 is a genome-only base'):
+        _by_symbol(release)
 
 
 def test_a_primary_alignment_with_no_cigar_fails_the_build(tmp_path: pathlib.Path) -> None:
@@ -508,12 +520,23 @@ def _with_clip(tmp_path: pathlib.Path) -> refseq.Release:
     return _release(tmp_path, gff=[*GFF, *CLIP_GFF], reads=[*READS, CLIP_READ])
 
 
+def _quietly(release: refseq.Release) -> dict[str, bundle_pb2.GeneBundle]:
+    """The bundles by symbol, for a test about their contents rather than the warnings their build raises."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', build.BuildWarning)
+        return _by_symbol(release)
+
+
 def test_a_cds_whose_start_the_genome_lacks_is_the_records(tmp_path: pathlib.Path) -> None:
+    (transcript,) = _quietly(_with_clip(tmp_path))['CLIP'].transcripts
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (3, 32)
+
+
+def test_a_cds_whose_start_the_genome_lacks_warns_with_both_bounds(tmp_path: pathlib.Path) -> None:
     with pytest.warns(
         build.BuildWarning, match=r'NM_000060\.1: CDS 3\.\.32 taken from its record; the annotation projects 12\.\.32'
     ):
-        (transcript,) = _by_symbol(_with_clip(tmp_path))['CLIP'].transcripts
-    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (3, 32)
+        _by_symbol(_with_clip(tmp_path))
 
 
 def test_a_release_whose_sources_agree_builds_without_a_warning(tmp_path: pathlib.Path) -> None:
@@ -527,9 +550,13 @@ def test_the_records_cds_is_kept_where_the_annotation_disagrees_on_an_aligned_tr
     tmp_path: pathlib.Path,
 ) -> None:
     # every PLUS base aligns, but the record is the transcript, so its CDS is the one kept
-    with pytest.warns(build.BuildWarning, match=r'NM_000010\.2: CDS 3\.\.29 taken from its record'):
-        bundles = _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '4..30'}))
+    bundles = _quietly(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '4..30'}))
     assert bundles['PLUS'].transcripts[0].cds.start_index == 3
+
+
+def test_an_annotation_cds_projecting_elsewhere_on_an_aligned_transcript_warns(tmp_path: pathlib.Path) -> None:
+    with pytest.warns(build.BuildWarning, match=r'NM_000010\.2: CDS 3\.\.29 taken from its record'):
+        _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '4..30'}))
 
 
 def test_a_transcript_coding_by_the_annotation_but_not_its_record_fails_the_build(tmp_path: pathlib.Path) -> None:
@@ -553,17 +580,99 @@ def test_a_frameshifted_cds_is_taken_by_its_outer_bounds(tmp_path: pathlib.Path)
     assert (cds.start_index, cds.end_index_inclusive) == (4, 29)
 
 
-def test_the_command_reports_each_build_warning_on_a_line(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    release = _with_clip(tmp_path)
-    cli.main([
+def _refseq_command(release: refseq.Release, shards: pathlib.Path) -> list[str]:
+    return [
         'refseq', '--assembly', 'GRCh38', '--release', 'RS_TEST',
         '--annotation', str(release.annotation), '--transcripts', str(release.transcripts),
         '--proteins', str(release.proteins), '--alignments', str(release.alignments[0]),
         '--hgnc', str(release.hgnc), '--mane', str(release.mane), '--records', str(release.records),
-        '--shards', str(tmp_path / 'shards'),
-    ])  # fmt: skip
+        '--shards', str(shards),
+    ]  # fmt: skip
+
+
+def test_the_command_reports_each_build_warning_on_a_line(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # the command reports build warnings whatever filters the caller runs it under
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        cli.main(_refseq_command(_with_clip(tmp_path), tmp_path / 'shards'))
     report = capsys.readouterr().err.splitlines()
     assert 'warning: NM_000060.1: CDS 3..32 taken from its record; the annotation projects 12..32' in report[-2]
     assert report[-1] == '1 build warnings'
+
+
+def test_a_failed_build_reports_its_warnings_before_the_failure(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # CLIP is built last, and its CDS warning is raised before its missing protein fails the build
+    proteins = {k: v for k, v in PROTEINS.items() if k != 'NP_000060.1'}
+    release = _release(tmp_path, gff=[*GFF, *CLIP_GFF], reads=[*READS, CLIP_READ], proteins=proteins)
+    with pytest.raises(SystemExit):
+        cli.main(_refseq_command(release, tmp_path / 'shards'))
+    report = capsys.readouterr().err.splitlines()
+    assert report[-3].startswith('warning: NM_000060.1: CDS 3..32 taken from its record')
+    assert report[-2] == '1 build warnings'
+    assert report[-1] == 'FAILED: NM_000060.1: its protein NP_000060.1 is not in the protein set'
+
+
+def test_a_warning_of_another_kind_is_shown_and_the_command_finishes(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stands in for a library warning raised during the build; showing it while recording hung the command
+    write_shard = store_build.write_shard
+
+    def warning_first(*args: object, **kwargs: object) -> pathlib.Path:
+        warnings.warn('a library warning', RuntimeWarning, stacklevel=1)
+        return write_shard(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_build, 'write_shard', warning_first)
+    with pytest.warns(RuntimeWarning, match='a library warning'):  # re-shown once the build is over
+        cli.main(_refseq_command(_release(tmp_path), tmp_path / 'shards'))
+    assert capsys.readouterr().out.strip().endswith('.bagz')  # the command finished and printed its shard
+
+
+def test_a_record_cds_where_the_annotation_gives_none_warns(tmp_path: pathlib.Path) -> None:
+    # PAR is aligned and the annotation calls it non-coding, but its record states a CDS
+    with pytest.warns(
+        build.BuildWarning, match=r'NM_000040\.1: CDS 4\.\.39 taken from its record; the annotation gives it no CDS'
+    ):
+        _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000040.1': '5..40'}))
+
+
+def test_a_transcript_coding_only_by_its_record_must_still_be_aligned(tmp_path: pathlib.Path) -> None:
+    # NONC has no alignment; a CDS in its record makes it coding, and a coding transcript needs a placement
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NR_000030.1': '5..40'})
+    with pytest.raises(build.BuildError, match=r'no alignment.*NR_000030\.1'):
+        list(refseq.bundles(release))
+
+
+def test_a_record_cds_outside_its_sequence_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..300'})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: its record states a CDS 4\.\.299 outside its sequence'):
+        list(refseq.bundles(release))
+
+
+def test_a_frameshifted_cds_wrapped_onto_a_second_line_is_read_whole(tmp_path: pathlib.Path) -> None:
+    wrapped = 'join(5..17,\n                     19..30)'
+    cds = _quietly(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': wrapped}))['PLUS'].transcripts[0].cds
+    assert (cds.start_index, cds.end_index_inclusive) == (4, 29)
+
+
+def test_a_cds_in_a_record_with_no_version_line_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # otherwise the CDS would be credited to the record before it
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    text = text.replace('VERSION     NM_000020.1\n', '', 1)
+    release.records.write_bytes(gzip.compress(text.encode('ascii')))
+    with pytest.raises(build.BuildError, match='a CDS in a record with no VERSION line'):
+        list(refseq.bundles(release))
+
+
+def test_the_shard_names_the_records_it_was_cut_from(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    shard = store_build.write_shard(
+        refseq.bundles(release), tmp_path / 'shards', release='RS_TEST', inputs=release.inputs()
+    )
+    roles = {i.role for i in store_build.shard_record(shard).inputs}
+    assert 'records' in roles

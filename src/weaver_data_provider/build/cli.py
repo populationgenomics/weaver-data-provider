@@ -101,27 +101,31 @@ def main(argv: list[str] | None = None) -> None:
     genome.set_defaults(run=_genome)
 
     args = parser.parse_args(argv)
+    failure: build.BuildError | None = None
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', build.BuildWarning)
         try:
             args.run(args)
         except build.BuildError as error:
-            print(f'FAILED: {error}', file=sys.stderr)
-            raise SystemExit(1) from error
-        finally:
-            _report(caught)
+            failure = error
+    # Reported only once recording has stopped: a warning shown while recording is recorded again.
+    _report(caught)
+    if failure is not None:
+        print(f'FAILED: {failure}', file=sys.stderr)
+        raise SystemExit(1) from failure
 
 
 def _report(caught: list[warnings.WarningMessage]) -> None:
     """Each build warning as one line on stderr, then their count; any other warning as Python shows it."""
-    ours = [w for w in caught if issubclass(w.category, build.BuildWarning)]
+    ours = 0
     for w in caught:
-        if w in ours:
+        if issubclass(w.category, build.BuildWarning):
+            ours += 1
             print(f'warning: {w.message}', file=sys.stderr)
         else:
             warnings.showwarning(w.message, w.category, w.filename, w.lineno)
     if ours:
-        print(f'{len(ours)} build warnings', file=sys.stderr)
+        print(f'{ours} build warnings', file=sys.stderr)
 
 
 if __name__ == '__main__':

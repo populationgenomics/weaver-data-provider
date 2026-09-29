@@ -215,15 +215,19 @@ def _read_record_cds(path: pathlib.Path) -> dict[str, tuple[int, int]]:
     say the record itself is incomplete; the bounds are still the record's.
 
     Raises:
-        build.BuildError: If a record states more than one CDS.
+        build.BuildError: If a record states more than one CDS, or a CDS before any VERSION line.
     """
     out: dict[str, tuple[int, int]] = {}
     version: str | None = None
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         for line in fh:
-            if line.startswith('VERSION'):
+            if line.startswith('LOCUS'):
+                version = None  # a record without a VERSION line must not inherit the previous one's
+            elif line.startswith('VERSION'):
                 version = line.split()[1]
-            elif line.startswith('     CDS ') and version is not None:
+            elif line.startswith('     CDS '):
+                if version is None:
+                    raise build.BuildError(f'{path}: a CDS in a record with no VERSION line: {line.strip()[:60]!r}')
                 location = line[21:].strip()
                 while location.count('(') > location.count(')'):  # a join may wrap onto the next lines
                     location += next(fh).strip()
