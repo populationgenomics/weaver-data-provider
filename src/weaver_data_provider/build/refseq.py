@@ -1,8 +1,9 @@
 """Cut one RefSeq annotation release into gene bundles.
 
 The inputs are the files NCBI publishes for an annotated assembly — the GFF3 annotation, the
-transcript and protein sequence sets, and its alignments of every RefSeq transcript to the assembly —
-plus HGNC's complete set, for gene identity, and the MANE summary, for ranking.
+transcript and protein sequence sets, the transcripts' GenBank records, and its alignments of every
+RefSeq transcript to the assembly — plus HGNC's complete set, for gene identity, and the MANE summary,
+for ranking.
 
 What is and is not bundled. Every transcript the annotation places on a chromosome (an `NC_` sequence)
 and names with a versioned accession, with each alignment NCBI publishes for it: a pseudoautosomal
@@ -14,8 +15,12 @@ getting exon arithmetic in place of an alignment, as does an alignment that does
 transcript's sequence or lie inside the annotation's span for it. A non-coding transcript NCBI
 published no alignment for is bundled without a placement, and counted by biotype in the report.
 
-Coding bounds are stated by the annotation in genome coordinates and projected onto the transcript
-through its alignment; a bound landing on a genome-only base has no transcript index, and fails.
+A transcript's coding bounds are its record's: the CDS its GenBank record states, in the record's own
+coordinates, so c. numbering is the record's whatever the genome holds. The annotation states the same
+bounds in genome coordinates, and they are projected through the alignment as a cross-check. They
+disagree where a start or stop codon lies in record bases the assembly lacks — the annotation clips
+the CDS at the alignment's edge and marks it partial — and there the record's bounds are kept and a
+`build.BuildWarning` names both. A transcript the annotation gives a CDS and its record none fails.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ import pathlib
 import re
 import sys
 import urllib.parse
+import warnings
 from collections.abc import Iterable, Iterator
 
 import pysam.libcalignedsegment
@@ -59,12 +65,13 @@ class Release:
     alignments: tuple[pathlib.Path, ...]  # known and model alignment BAMs, each with its .bai beside it
     hgnc: pathlib.Path  # HGNC complete set, TSV
     mane: pathlib.Path  # MANE summary, gzipped TSV
+    records: pathlib.Path  # the transcripts' GenBank records, gzipped: each one's CDS in its own coordinates
 
     def inputs(self) -> list[tuple[str, pathlib.Path]]:
         """Every file read, by role, for the shard's record of what it was cut from."""
         roles = [('annotation', self.annotation), ('transcripts', self.transcripts), ('proteins', self.proteins)]
         roles += [(f'alignments/{i}', path) for i, path in enumerate(self.alignments)]
-        return [*roles, ('hgnc', self.hgnc), ('mane', self.mane)]
+        return [*roles, ('hgnc', self.hgnc), ('mane', self.mane), ('records', self.records)]
 
 
 @dataclasses.dataclass
@@ -198,6 +205,33 @@ def _read_annotation(path: pathlib.Path) -> _Annotation:
             elif kind == 'CDS':
                 annotation.add_cds(span, attrs)
     return annotation
+
+
+def _read_record_cds(path: pathlib.Path) -> dict[str, tuple[int, int]]:
+    """Each GenBank record's CDS as 0-based inclusive record indices, keyed by versioned accession.
+
+    A CDS written as a join — a programmed frameshift, `join(114..317,319..801)` — is taken by its outer
+    bounds, the first and last coding bases, which is what c. numbering needs. Partial marks (`<`, `>`)
+    say the record itself is incomplete; the bounds are still the record's.
+
+    Raises:
+        build.BuildError: If a record states more than one CDS.
+    """
+    out: dict[str, tuple[int, int]] = {}
+    version: str | None = None
+    with gzip.open(path, 'rt', encoding='utf-8') as fh:
+        for line in fh:
+            if line.startswith('VERSION'):
+                version = line.split()[1]
+            elif line.startswith('     CDS ') and version is not None:
+                location = line[21:].strip()
+                while location.count('(') > location.count(')'):  # a join may wrap onto the next lines
+                    location += next(fh).strip()
+                if version in out:
+                    raise build.BuildError(f'{path}: {version} states more than one CDS')
+                numbers = [int(n) for n in re.findall(r'\d+', location)]
+                out[version] = (min(numbers) - 1, max(numbers) - 1)
+    return out
 
 
 def _read_fasta(path: pathlib.Path) -> dict[str, bytes]:
@@ -426,6 +460,7 @@ class _Loaded:
     placements: dict[tuple[str, str], _Placement]  # by (versioned accession, chromosome)
     hgnc: dict[str, dict[str, str]]  # by NCBI GeneID
     mane: dict[str, tuple[str, str]]
+    record_cds: dict[str, tuple[int, int]]  # by versioned accession, 0-based inclusive
 
 
 def _counted(counts: collections.Counter[str]) -> str:
@@ -445,6 +480,7 @@ def _load(release: Release) -> _Loaded:
         placements=_read_alignments(release.alignments, annotation.transcripts),
         hgnc=_read_hgnc(release.hgnc),
         mane=_read_mane(release.mane),
+        record_cds=_read_record_cds(release.records),
     )
     placed = {versioned for versioned, _ in loaded.placements}
     unplaced = collections.Counter(r.biotype for t, r in annotation.transcripts.items() if t not in placed)
@@ -458,18 +494,49 @@ def _load(release: Release) -> _Loaded:
 
 
 def _check_coverage(loaded: _Loaded) -> None:
-    """Every coding transcript has an alignment, and every transcript a record."""
+    """Every coding transcript has an alignment and a stated CDS, and every transcript a record."""
     transcripts = loaded.annotation.transcripts
-    unaligned = sorted(
-        t for t, r in transcripts.items() if r.cds_spans and not any((t, c) in loaded.placements for c in r.spans)
-    )
+    coding = {t for t, r in transcripts.items() if r.cds_spans or t in loaded.record_cds}
+    unaligned = sorted(t for t in coding if not any((t, c) in loaded.placements for c in transcripts[t].spans))
     if unaligned:
         raise build.BuildError(
             f'{len(unaligned)} coding transcripts the annotation places on a chromosome have no alignment, '
             f'e.g. {unaligned[:5]}; a bundle would have to invent one'
         )
+    if unstated := sorted(t for t, r in transcripts.items() if r.cds_spans and t not in loaded.record_cds):
+        raise build.BuildError(
+            f'{len(unstated)} transcripts the annotation gives a CDS state none in their record, e.g. {unstated[:5]}'
+        )
     if missing := sorted(t for t in transcripts if t not in loaded.sequences):
         raise build.BuildError(f'{len(missing)} transcripts have no sequence in the transcript set, e.g. {missing[:5]}')
+
+
+def _record_cds(versioned: str, record: _Transcript, placement: _Placement | None, loaded: _Loaded) -> bundle_pb2.Cds:
+    """The record's CDS, warning where the annotation's genome-coordinate CDS projects elsewhere."""
+    start, end = loaded.record_cds[versioned]
+    if not 0 <= start < end < len(loaded.sequences[versioned]):
+        raise build.BuildError(f'{versioned}: its record states a CDS {start}..{end} outside its sequence')
+    stated = bundle_pb2.Cds(start_index=start, end_index_inclusive=end)
+    if placement is None:
+        return stated
+    if not record.cds_spans:
+        disagreement = 'the annotation gives it no CDS'
+    else:
+        try:
+            projected = _cds(versioned, record, placement)
+        except build.BuildError as error:
+            disagreement = f'the annotation does not project: {error}'
+        else:
+            if projected == stated:
+                return stated
+            disagreement = (
+                f'the annotation projects {projected.start_index}..{projected.end_index_inclusive} '
+                f'through the alignment on {placement.chromosome}'
+            )
+    warnings.warn(
+        f'{versioned}: CDS {start}..{end} taken from its record; {disagreement}', build.BuildWarning, stacklevel=2
+    )
+    return stated
 
 
 def _add_protein(
@@ -513,14 +580,16 @@ def _add_transcript(
         tag = _TAGS.get(partner[1])
         if tag is not None and tag not in transcript.tags:
             transcript.tags.append(tag)
+    first_placement = None
     for chromosome in record.spans:
         placement = loaded.placements.get((versioned, chromosome))
         if placement is None:
             continue
         _check_placement(versioned, record, placement, len(residues))
         transcript.alignments.append(_alignment(loaded.assembly, placement))
-        if record.cds_spans and not transcript.HasField('cds'):
-            transcript.cds.CopyFrom(_cds(versioned, record, placement))
+        first_placement = first_placement or placement
+    if versioned in loaded.record_cds:
+        transcript.cds.CopyFrom(_record_cds(versioned, record, first_placement, loaded))
     if record.protein is not None:
         transcript.protein_accession, transcript.protein_version = record.protein
     _add_protein(bundle, digests, record, loaded)
