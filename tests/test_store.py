@@ -327,7 +327,7 @@ def test_a_bundle_citing_a_sequence_it_does_not_carry_is_refused_on_write(tmp_pa
     dangling = bundle_pb2.GeneBundle()
     dangling.CopyFrom(_BUNDLES[0])
     dangling.transcripts[0].sequence_digest = refget.digest(b'NOTCARRIED')  # well formed, but not in the bundle
-    with pytest.raises(build.BuildError, match=r'gene_bundle\.digests_resolve'):
+    with pytest.raises(build.BuildError, match='cites sequences it does not carry'):
         store_build.write_shard([dangling], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))
 
 

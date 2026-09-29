@@ -62,14 +62,10 @@ enum Alphabet {
 
 // One gene: identity across nomenclatures, every transcript and protein held for it, and the
 // distinct sequences those cite. The record a lookup by symbol, accession, protein or digest returns.
+// Every sequence_digest a transcript or protein cites is one of the bundle's sequences; the shard writer
+// checks it, since a CEL rule comparing each citation with each sequence exceeds protovalidate's
+// evaluation budget on a gene with hundreds of transcripts.
 message GeneBundle {
-  option (buf.validate.message).cel = {
-    id: "gene_bundle.digests_resolve"
-    message: "every sequence_digest a transcript or protein cites is one of the bundle's sequences"
-    expression:
-      "this.transcripts.all(t, this.sequences.exists(s, s.digest == t.sequence_digest)) "
-      "&& this.proteins.all(p, this.sequences.exists(s, s.digest == p.sequence_digest))"
-  };
   Gene gene = 1 [(buf.validate.field).required = true];
   repeated Transcript transcripts = 2;
   repeated Protein proteins = 3;

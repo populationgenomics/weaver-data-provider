@@ -45,6 +45,14 @@ def shard_record(path: pathlib.Path) -> store_pb2.Shard:
     return shard
 
 
+def _check_citations(bundle: bundle_pb2.GeneBundle, what: str) -> None:
+    """Every sequence a transcript or protein cites is one the bundle carries."""
+    carried = {s.digest for s in bundle.sequences}
+    cited = {t.sequence_digest for t in bundle.transcripts} | {p.sequence_digest for p in bundle.proteins}
+    if dangling := sorted(cited - carried):
+        raise build.BuildError(f'{what}: cites sequences it does not carry: {dangling[:3]}')
+
+
 _RELEASE_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 
 
@@ -87,7 +95,9 @@ def write_shard(
     try:
         with bagz.Writer(str(pending), _ZSTD) as writer:
             for bundle in bundles:
-                build.validated(bundle, f'{release} bundle {records} ({bundle.gene.symbol})')
+                what = f'{release} bundle {records} ({bundle.gene.symbol})'
+                build.validated(bundle, what)
+                _check_citations(bundle, what)
                 writer.write(bundle.SerializeToString())
                 records += 1
         if records == 0:
