@@ -1,0 +1,34 @@
+name: lint
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  pre-commit:
+    # Runs every hook in .pre-commit-config.yaml — the whole static-check gate. Skips draft PRs.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      # buf on PATH for the buf-lint hook.
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        with:
+          version: "1.73.0"
+          # No default token: the release lookup that resolves the download URL would go out
+          # anonymous, against a per-IP rate limit shared across the hosted runner pool.
+          github_token: ${{ github.token }}
+      # Pre-sync the env so the pyright hook's `uv run` is a no-op.
+      - run: uv sync --locked --python 3.13
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: uv run pre-commit run --all-files --show-diff-on-failure

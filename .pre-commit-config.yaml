@@ -1,0 +1,58 @@
+# `pre-commit run --all-files` is the lint gate, locally and in CI. A hook added here is gated with no
+# separate workflow edit. pytest stays a separate job (too slow for the per-commit path).
+default_language_version:
+  python: python3.13
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      # Generated stubs are committed verbatim from protoc; a hygiene rewrite would drift them from
+      # the generator and break the freshness gate.
+      - id: end-of-file-fixer
+        exclude: '^src/(weaver_data_provider/v1|buf)/'
+      - id: trailing-whitespace
+        exclude: '^src/(weaver_data_provider/v1|buf)/'
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: debug-statements
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+      - id: ruff-format
+  - repo: local
+    hooks:
+      # pyright needs the project deps to resolve imports, so it runs in the lint env via `uv run`.
+      # Whole-project (pass_filenames: false); fires on any staged .py.
+      - id: pyright
+        name: pyright
+        entry: uv run --group lint pyright
+        language: system
+        files: \.py$
+        pass_filenames: false
+      # buf lint: the hand-authored protos' structural and protovalidate discipline (buf.yaml).
+      # Whole-module; fires on any staged .proto. Needs buf on PATH.
+      - id: buf-lint
+        name: buf lint
+        entry: buf lint
+        language: system
+        files: \.proto$
+        pass_filenames: false
+  # Markdown formatter. CommonMark-strict, so intraword `_` (snake_case) stays literal and fenced
+  # code is untouched. gfm = tables/task-lists/autolinks; frontmatter = YAML headers. Wrap at 120.
+  - repo: https://github.com/hukkin/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        args: ["--wrap", "120"]
+        additional_dependencies:
+          - mdformat-gfm==1.0.0
+          - mdformat-frontmatter==2.1.2
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt

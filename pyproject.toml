@@ -1,0 +1,86 @@
+[project]
+name = "weaver-data-provider"
+version = "0.1.0"
+description = "Reference data for the hgvs-weaver HGVS engine: gene bundles built from NCBI's published alignments, and the DataProvider that reads them."
+readme = "README.md"
+authors = [{ name = "Tobias Sargeant", email = "toby.sargeant@populationgenomics.org.au" }]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    # The engine this provides for. Lower bound only: the protocol is weaver's, and an upper bound
+    # would make weaver's own test suite, which uses this package, unresolvable on every bump.
+    "hgvs-weaver>=0.6",
+    "bagz[gcs]>=0.3.8",
+    # The committed stubs are gencode 6.33.5 (grpcio-tools 1.81.1's protoc); an older runtime refuses them.
+    "protobuf>=6.33.5,<7",
+    # The RefSeq builder reads NCBI's alignment BAMs; the reader does not need it.
+    "pysam>=0.23",
+    "google-cloud-storage>=2.18",
+    # The checksum GCS records on every object, composite uploads included.
+    "google-crc32c>=1.5",
+    # The builder checks every record it writes against the protos' buf.validate constraints.
+    "protovalidate>=1.2",
+]
+
+[project.scripts]
+weaver-data-build = "weaver_data_provider.build.cli:main"
+
+# PEP 735 dependency groups, installed on demand with `uv sync --group <name>`.
+[dependency-groups]
+# Codegen: grpcio-tools' protoc emits the committed Python stubs. Exactly Themis's pin, so both
+# repos' stubs are generated for the same protobuf runtime. buf drives export/lint/breaking.
+codegen = ["grpcio-tools==1.81.1"]
+# Lint + test toolchain.
+lint = ["pre-commit>=4", "ruff>=0.15", "pyright>=1.1.400", "pytest>=9", "types-protobuf>=6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weaver_data_provider", "src/buf"]
+
+[tool.uv]
+# `uv run` / `uv sync` install these by default, so `uv run pytest` and `uv run pyright` resolve the
+# toolchain; a library consumer still installs only `[project].dependencies`.
+default-groups = ["lint", "codegen"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["src/weaver_data_provider/v1", "src/buf"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP", "S", "ANN", "BLE", "RET", "SIM", "PT", "PTH", "RUF", "D", "TID252"]
+# D1xx is docstring *presence* — policy, not lint (docs/style/python.md). Format is enforced when one exists.
+ignore = ["ANN401", "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Absolute imports only (docs/style/python.md).
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S108", "S311"]  # asserts; /tmp strings as data; sampling, not crypto
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# An unrecognised key in this table is an error, not a warning: a misspelled option would
+# otherwise leave the guard it was meant to set switched off, silently.
+strict_config = true
+
+[tool.pyright]
+pythonVersion = "3.12"
+# Resolve imports from the uv-managed venv, so editor pyright sees installed deps the same way
+# `uv run pyright` does.
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests", "scripts", "tools"]
+exclude = ["**/__pycache__", "src/weaver_data_provider/v1", "src/buf", ".venv"]
+typeCheckingMode = "standard"

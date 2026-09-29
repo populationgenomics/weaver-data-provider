@@ -1,0 +1,181 @@
+// A gene bundle: one record per gene holding every transcript the reference data has for it, the
+// proteins they encode, NCBI's published alignment of each onto the genome cut into per-exon cigars,
+// and the distinct sequences they cite, stored once each by refget digest.
+//
+// The at-rest format of a store. Stores sit in other projects' buckets, so this is gated by
+// `buf breaking` from its first release: a reshape reserves the old field and adds a new one.
+// The field shapes follow weaver's TranscriptData and ExonData, so the provider copies them across.
+
+syntax = "proto3";
+
+package weaver_data_provider.v1;
+
+import "buf/validate/validate.proto";
+
+enum Publisher {
+  PUBLISHER_UNSPECIFIED = 0;
+  PUBLISHER_REFSEQ = 1;
+  PUBLISHER_ENSEMBL = 2;
+}
+
+enum TranscriptStatus {
+  TRANSCRIPT_STATUS_UNSPECIFIED = 0;
+  TRANSCRIPT_STATUS_CURRENT = 1; // the version the annotation release names
+  TRANSCRIPT_STATUS_SUPERSEDED = 2; // replaced by a later version; from the historical set
+  TRANSCRIPT_STATUS_SUPPRESSED = 3; // withdrawn; from the historical set
+}
+
+enum Tag {
+  TAG_UNSPECIFIED = 0;
+  TAG_MANE_SELECT = 1;
+  TAG_MANE_PLUS_CLINICAL = 2;
+  TAG_REFSEQ_SELECT = 3;
+  TAG_ENSEMBL_CANONICAL = 4;
+}
+
+enum Assembly {
+  ASSEMBLY_UNSPECIFIED = 0;
+  ASSEMBLY_GRCH38 = 1;
+  ASSEMBLY_GRCH37 = 2;
+}
+
+enum Strand {
+  STRAND_UNSPECIFIED = 0;
+  STRAND_PLUS = 1;
+  STRAND_MINUS = 2;
+}
+
+// Where an alignment's exon cigars came from. Only NCBI publishes alignments; the others are
+// derived, and a consumer projecting a coordinate can see which placements are published.
+enum AlignmentSource {
+  ALIGNMENT_SOURCE_UNSPECIFIED = 0;
+  ALIGNMENT_SOURCE_NCBI_BAM = 1; // NCBI's RefSeq transcript alignments (knownrefseq/modelrefseq BAM)
+  ALIGNMENT_SOURCE_MANE_PARTNER = 2; // copied from the sequence-identical RefSeq MANE partner
+  ALIGNMENT_SOURCE_COMPUTED = 3; // aligned by us at build time; placement of indels is ours
+}
+
+enum Alphabet {
+  ALPHABET_UNSPECIFIED = 0;
+  ALPHABET_NUCLEOTIDE = 1;
+  ALPHABET_PROTEIN = 2;
+}
+
+// One gene: identity across nomenclatures, every transcript and protein held for it, and the
+// distinct sequences those cite. The record a lookup by symbol, accession, protein or digest returns.
+message GeneBundle {
+  option (buf.validate.message).cel = {
+    id: "gene_bundle.digests_resolve"
+    message: "every sequence_digest a transcript or protein cites is one of the bundle's sequences"
+    expression:
+      "this.transcripts.all(t, this.sequences.exists(s, s.digest == t.sequence_digest)) "
+      "&& this.proteins.all(p, this.sequences.exists(s, s.digest == p.sequence_digest))"
+  };
+  Gene gene = 1 [(buf.validate.field).required = true];
+  repeated Transcript transcripts = 2;
+  repeated Protein proteins = 3;
+  repeated Sequence sequences = 4; // one per distinct digest
+}
+
+message Gene {
+  string symbol = 1 [(buf.validate.field).string.min_len = 1]; // HGNC-approved where HGNC knows the gene
+  string hgnc_id = 2; // "HGNC:1100"; empty when HGNC has no entry
+  string ncbi_gene_id = 3; // GeneID as a string, "672"
+  string ensembl_gene_id = 4; // "ENSG00000012048"
+  repeated string previous_symbols = 5; // withdrawn symbols papers still print
+  repeated string alias_symbols = 6;
+  string name = 7;
+}
+
+message Transcript {
+  string accession = 1 [(buf.validate.field).string.min_len = 1]; // "NM_000059", no version
+  uint32 version = 2 [(buf.validate.field).uint32.gt = 0];
+  Publisher publisher = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  TranscriptStatus status = 4 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  string biotype = 5; // the annotation's feature type: mRNA, lnc_RNA, ...
+  repeated Tag tags = 6 [(buf.validate.field).repeated.items.enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // Resolves in GeneBundle.sequences; a digest in any other spelling would join nothing.
+  string sequence_digest = 7 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
+  Cds cds = 8; // absent for a non-coding transcript
+  string protein_accession = 9;
+  uint32 protein_version = 10;
+  string mane_partner = 11; // the other publisher's accession.version in the same MANE pair
+  repeated Alignment alignments = 12; // one per placement: a pseudoautosomal transcript has one on X and one on Y
+}
+
+// The coding sequence as 0-based transcript indices, both inclusive: `start_index` is the first
+// base of the start codon and `end_index_inclusive` the last base of the termination codon.
+message Cds {
+  option (buf.validate.message).cel = {
+    id: "cds.bounds"
+    message: "start_index < end_index_inclusive (both inclusive transcript indices)"
+    expression: "this.start_index < this.end_index_inclusive"
+  };
+  uint32 start_index = 1;
+  uint32 end_index_inclusive = 2;
+}
+
+message Alignment {
+  Assembly assembly = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  string chromosome = 2 [(buf.validate.field).string.min_len = 1]; // the assembly's sequence accession, "NC_000017.11"
+  Strand strand = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  AlignmentSource source = 4 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  repeated Exon exons = 5 [(buf.validate.field).repeated.min_items = 1]; // transcript order
+}
+
+// One aligned exon. Transcript coordinates are 0-based half-open; genome coordinates 0-based closed.
+// The cigar reads in transcript orientation with `=` match, `X` substitution, `I` transcript-only
+// bases and `D` genome-only bases; `M` is not used.
+//
+// genome_start <= genome_end_inclusive on both strands. On the minus strand the transcript runs
+// against the genome, so the cigar's first operation lands at genome_end_inclusive and consumes downward, against the
+// reverse complement. A reader walking it upward lands mirrored inside the exon, which is a
+// plausible-looking position rather than an error, and no constraint here can catch it.
+message Exon {
+  option (buf.validate.message).cel = {
+    id: "exon.spans"
+    message: "transcript_start < transcript_end (half-open); genome_start <= genome_end_inclusive on both strands"
+    expression: "this.transcript_start < this.transcript_end && this.genome_start <= this.genome_end_inclusive"
+  };
+  uint32 transcript_start = 1;
+  uint32 transcript_end = 2;
+  uint32 genome_start = 3;
+  uint32 genome_end_inclusive = 4;
+  string cigar = 5 [(buf.validate.field).string.pattern = "^([0-9]+[=XID])+$"];
+}
+
+message Protein {
+  string accession = 1 [(buf.validate.field).string.min_len = 1]; // "NP_000050"
+  uint32 version = 2 [(buf.validate.field).uint32.gt = 0];
+  // Resolves in GeneBundle.sequences, as Transcript.sequence_digest does.
+  string sequence_digest = 3 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
+  string transcript_accession = 4;
+  uint32 transcript_version = 5;
+}
+
+// A distinct sequence, keyed by its refget digest (sha512t24u over the uppercased residues).
+message Sequence {
+  string digest = 1 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
+  Alphabet alphabet = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  bytes residues = 3 [(buf.validate.field).bytes.min_len = 1];
+}

@@ -1,0 +1,23 @@
+# The protos under proto/ are the source of truth for the store's at-rest format; scripts/regen.py
+# emits the committed Python stubs from them. `buf breaking` against the previous commit gates every
+# change: this format sits in other projects' buckets, so a reshape reserves and adds, never edits.
+version: v2
+modules:
+  - path: proto
+deps:
+  # Pinned to the same commit as Themis's buf.lock: both vendor buf/validate, and Python loads it once.
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+    - PROTOVALIDATE
+breaking:
+  use:
+    - FILE
+    # A field may go, but its number and name stay reserved, so no later change can reuse them for
+    # another type; FILE alone passes a delete in one change and a reuse in the next.
+    - FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED
+    - FIELD_NO_DELETE_UNLESS_NAME_RESERVED
+  except:
+    - FIELD_NO_DELETE
+  ignore_unstable_packages: false

@@ -1,0 +1,53 @@
+// The catalogue beside a derived genome: every sequence in it with its length and refget digest, so
+// a chromosome's identifier is a lookup and a digest resolves to a chromosome, and how its bases are
+// cut into the blocks file. Written last by the genome builder, which makes it the completion marker,
+// and loaded whole by the reader.
+//
+// The blocks file holds every sequence in catalogue order, each cut into records of `block_size`
+// bases, the last block of a sequence shorter. A sequence's first record number is the sum of
+// ceil(length / block_size) over the sequences before it.
+
+syntax = "proto3";
+
+package weaver_data_provider.v1;
+
+import "buf/validate/validate.proto";
+import "weaver_data_provider/v1/bundle.proto";
+import "weaver_data_provider/v1/store.proto";
+
+message SequenceCatalogue {
+  option (buf.validate.message).cel = {
+    id: "sequence_catalogue.digest_algorithm"
+    message: "digest length must match digest_algorithm: 32 hex characters for md5, 8 for crc32c"
+    expression:
+      "(this.digest_algorithm == 'md5' && size(this.digest) == 32) "
+      "|| (this.digest_algorithm == 'crc32c' && size(this.digest) == 8)"
+  };
+  // The reader refuses a catalogue whose format it does not know, rather than misreading it.
+  uint32 format_version = 1 [(buf.validate.field).uint32.gt = 0];
+  Assembly assembly = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  repeated SequenceEntry sequences = 3 [(buf.validate.field).repeated.min_items = 1];
+  Input source = 4 [(buf.validate.field).required = true]; // the FASTA the genome was cut from
+  string builder = 5 [(buf.validate.field).string.min_len = 1]; // "weaver-data-provider 0.1.0"
+  uint32 block_size = 6 [(buf.validate.field).uint32.gt = 0]; // bases per record of the blocks file
+  // The blocks file's own bytes, checked at open: its record numbers mean nothing against another
+  // catalogue's lengths.
+  string digest = 7 [(buf.validate.field).string.pattern = "^([0-9a-f]{8}|[0-9a-f]{32})$"];
+  string digest_algorithm = 8 [(buf.validate.field).string = {
+    in: [
+      "md5",
+      "crc32c"
+    ]
+  }];
+}
+
+message SequenceEntry {
+  string name = 1 [(buf.validate.field).string.min_len = 1]; // the FASTA record name, "NC_000001.11"
+  uint64 length = 2 [(buf.validate.field).uint64.gt = 0];
+  // sha512t24u over the uppercased residues
+  string digest = 3 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
+  string description = 4; // the rest of the FASTA header line
+}

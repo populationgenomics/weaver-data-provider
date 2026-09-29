@@ -1,0 +1,49 @@
+name: schema-compat
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  backward-compatible:
+    # `buf breaking` under the FILE rule set (buf.yaml): stores and genomes already written sit in
+    # other projects' buckets, so a renumber or type change of a committed field fails here.
+    # Skips draft PRs.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Full history: the baseline is a commit, not the checkout.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        with:
+          version: "1.73.0"
+          # No default token: the release lookup that resolves the download URL would go out
+          # anonymous, against a per-IP rate limit shared across the hosted runner pool.
+          github_token: ${{ github.token }}
+      # Baseline = what main held before this change. For a PR that is the base branch tip; on a push
+      # it is the commit the push started from, so every commit a multi-commit push brings is compared.
+      # A push that creates the branch has no before, and falls back to the previous commit; a root
+      # commit has no baseline and is skipped.
+      - name: Resolve baseline ref
+        id: baseline
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${BEFORE:-}" ] && [ "${BEFORE}" != "0000000000000000000000000000000000000000" ]; then
+            echo "ref=${BEFORE}" >> "$GITHUB_OUTPUT"
+          elif git rev-parse --verify -q HEAD^ >/dev/null; then
+            echo "ref=HEAD^" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.baseline.outputs.ref != ''
+        run: buf breaking --against ".git#ref=${{ steps.baseline.outputs.ref }}"

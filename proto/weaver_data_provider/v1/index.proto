@@ -1,0 +1,53 @@
+// The lookup tables beside a store's bundles, each loaded whole at open and searched in memory:
+// sorted key tables from a key to bundle record numbers, and per-chromosome interval tables for a
+// position query. Each table is one bagz record, so the whole column compresses as a block.
+
+syntax = "proto3";
+
+package weaver_data_provider.v1;
+
+import "buf/validate/validate.proto";
+import "weaver_data_provider/v1/bundle.proto";
+
+// Keys in bytewise sorted order, each mapping to a run of bundle record numbers. The offsets and
+// record numbers are little-endian uint32 arrays carried as bytes, so a reader views them in place
+// rather than materialising a million integers. Record numbers run across the manifest's shards in
+// their listed order.
+message KeyTable {
+  option (buf.validate.message).cel = {
+    id: "keytable.offsets"
+    message: "records, key_offsets and record_offsets are uint32 arrays; the two offset arrays are the same length"
+    expression:
+      "size(this.records) % 4 == 0 && size(this.key_offsets) % 4 == 0 "
+      "&& size(this.key_offsets) == size(this.record_offsets)"
+  };
+  // symbol, accession, protein or digest. A string by choice: it names which table this is, and
+  // the reader looks tables up by it, so a new kind is a new table rather than a schema change.
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+  bytes keys = 2; // every key, concatenated
+  bytes key_offsets = 3; // n+1 uint32: where each key starts in `keys`, and the end
+  bytes records = 4; // uint32 bundle record numbers, grouped by key, ascending within a key
+  bytes record_offsets = 5; // n+1 uint32: where each key's run starts in `records`, and the end
+}
+
+// All placements on one chromosome, as parallel arrays sorted by start: the interval table a
+// position query bisects. One record per chromosome; a store is on one assembly.
+//
+// These stay `repeated uint32` rather than packed into `bytes` the way KeyTable's arrays are. A
+// position query bisects a running maximum of the ends, which exists in no encoding and has to be
+// built at open, so a reader materialises these arrays whatever their form.
+message ChromosomeIntervals {
+  option (buf.validate.message).cel = {
+    id: "intervals.parallel"
+    message: "start, end_inclusive and record are parallel arrays of the same length"
+    expression: "size(this.start) == size(this.end_inclusive) && size(this.end_inclusive) == size(this.record)"
+  };
+  Assembly assembly = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  string chromosome = 2 [(buf.validate.field).string.min_len = 1]; // "NC_000017.11"
+  repeated uint32 start = 3; // 0-based genome start of a transcript's placement
+  repeated uint32 end_inclusive = 4; // 0-based inclusive genome end
+  repeated uint32 record = 5; // the GeneBundle record number
+}

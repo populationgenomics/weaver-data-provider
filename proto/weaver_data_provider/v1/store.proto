@@ -1,0 +1,92 @@
+// A store's manifest: what format it is in, which bundle shards its index spans and in what order,
+// the index files built over them, and what it was built from. Written last by the index builder, and
+// read first by the reader, which refuses a format version it does not know and any shard or index
+// file whose bytes are not the ones the manifest records — so an index rebuilt in place and
+// interrupted before its manifest cannot be read against the old one.
+//
+// Where the files came from — a mirror, a bucket, a download — is the caller's to record. The
+// manifest names each input by role and by the digest of the bytes that were read.
+
+syntax = "proto3";
+
+package weaver_data_provider.v1;
+
+import "buf/validate/validate.proto";
+import "weaver_data_provider/v1/bundle.proto";
+
+message StoreManifest {
+  uint32 format_version = 1 [(buf.validate.field).uint32.gt = 0];
+  Assembly assembly = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }]; // every record in the store is on it
+  // Record numbers run across these in this order, not in filename order, so a reader opens the
+  // shards this list names, in this order.
+  repeated Shard shards = 3 [(buf.validate.field).repeated.min_items = 1];
+  string builder = 4 [(buf.validate.field).string.min_len = 1]; // "weaver-data-provider 0.1.0"
+  // The key and interval tables, each checked at open; a reader refuses a manifest missing either.
+  repeated IndexFile index_files = 5 [(buf.validate.field).repeated.min_items = 1];
+}
+
+// A file of the index built over the shards, named relative to the manifest.
+message IndexFile {
+  option (buf.validate.message).cel = {
+    id: "index_file.digest_algorithm"
+    message: "digest length must match digest_algorithm: 32 hex characters for md5, 8 for crc32c"
+    expression:
+      "(this.digest_algorithm == 'md5' && size(this.digest) == 32) "
+      "|| (this.digest_algorithm == 'crc32c' && size(this.digest) == 8)"
+  };
+  string path = 1 [(buf.validate.field).string.min_len = 1]; // "keys.bagz"
+  string digest = 2 [(buf.validate.field).string.pattern = "^([0-9a-f]{8}|[0-9a-f]{32})$"];
+  string digest_algorithm = 3 [(buf.validate.field).string = {
+    in: [
+      "md5",
+      "crc32c"
+    ]
+  }];
+}
+
+// One annotation release's bundles, immutable once written: a store built later over more
+// releases names the same shard, and an index is only valid over the exact shards it was built from.
+message Shard {
+  option (buf.validate.message).cel = {
+    id: "shard.digest_algorithm"
+    message: "digest length must match digest_algorithm: 32 hex characters for md5, 8 for crc32c"
+    expression:
+      "(this.digest_algorithm == 'md5' && size(this.digest) == 32) "
+      "|| (this.digest_algorithm == 'crc32c' && size(this.digest) == 8)"
+  };
+  string path = 1 [(buf.validate.field).string.min_len = 1]; // relative to the manifest
+  string release = 2 [(buf.validate.field).string.min_len = 1]; // the publisher's identifier, "RS_2024_08"
+  uint32 records = 3 [(buf.validate.field).uint32.gt = 0];
+  // The shard's own bytes, checked at open. A record count does not identify a shard: one rewritten
+  // at the same path and length would silently renumber every record an older index resolves.
+  string digest = 4 [(buf.validate.field).string.pattern = "^([0-9a-f]{8}|[0-9a-f]{32})$"];
+  string digest_algorithm = 5 [(buf.validate.field).string = {
+    in: [
+      "md5",
+      "crc32c"
+    ]
+  }];
+  repeated Input inputs = 6 [(buf.validate.field).repeated.min_items = 1]; // what this release was cut from
+}
+
+// One file a builder read.
+message Input {
+  option (buf.validate.message).cel = {
+    id: "input.digest_algorithm"
+    message: "digest length must match digest_algorithm: 32 hex characters for md5, 8 for crc32c"
+    expression:
+      "(this.digest_algorithm == 'md5' && size(this.digest) == 32) "
+      "|| (this.digest_algorithm == 'crc32c' && size(this.digest) == 8)"
+  };
+  string role = 1 [(buf.validate.field).string.min_len = 1]; // "annotation", "alignments", "hgnc", ...
+  string digest = 2 [(buf.validate.field).string.pattern = "^([0-9a-f]{8}|[0-9a-f]{32})$"];
+  string digest_algorithm = 3 [(buf.validate.field).string = {
+    in: [
+      "md5",
+      "crc32c"
+    ]
+  }];
+}

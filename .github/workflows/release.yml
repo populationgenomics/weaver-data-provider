@@ -1,0 +1,61 @@
+name: release
+
+# A `v*` tag builds, tests, publishes to PyPI through the trusted publisher registered for this
+# workflow (environment `pypi`), and creates the GitHub release with the built distributions.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      # The tag is the release's name; the wheel's version comes from pyproject.toml. They must agree,
+      # or PyPI shows one version and the repo another.
+      - name: Check the tag matches the package version
+        run: |
+          set -euo pipefail
+          version="$(uv version --short)"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version ${version}"
+            exit 1
+          fi
+      - run: uv sync --locked --python 3.13
+      - run: uv run pytest
+      - run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/weaver-data-provider/${{ github.ref_name }}
+    permissions:
+      # OIDC token for PyPI trusted publishing; contents for the GitHub release.
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@v1.14.2
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |-
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "weaver-data-provider ${GITHUB_REF_NAME#v}" \
+            --generate-notes

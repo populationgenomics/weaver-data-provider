@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+# Anchored: an unanchored `build/` also matches the builder package, src/weaver_data_provider/build.
+/dist/
+/build/
+*.egg-info/
+.claude/worktrees/
+.claude/settings.local.json
