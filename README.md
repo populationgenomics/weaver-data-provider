@@ -9,6 +9,9 @@ difference sits is a choice. NCBI publishes its choice: the alignment of every R
 builder takes that alignment exon by exon rather than deriving one, so the positions weaver computes are the ones
 ClinVar's names and VariantValidator's projections follow.
 
+Every placement NCBI publishes is kept — on a chromosome, an alternate locus or a patch — so a gene the primary assembly
+lacks is served where it is; [`docs/design/placements.md`](docs/design/placements.md) has the reasons.
+
 A store is one record per gene — every transcript, its protein, its alignments and the sequences they cite — in
 [bagz](https://github.com/google-deepmind/bagz) files with sorted key and interval tables that are read into memory at
 open. A lookup is a search over bytes in memory and one ranged read, from local disk or `gs://`.

@@ -12,6 +12,9 @@ from google.protobuf import message as proto_message
 import weaver_data_provider
 
 BUILDER = f'weaver-data-provider {weaver_data_provider.__version__}'
+# The kinds of sequence an NCBI assembly has, by RefSeq accession prefix, in the order a transcript's
+# alignments are kept: a caller naming no sequence gets the first.
+SEQUENCE_KINDS = {'NC_': 'chromosome', 'NT_': 'scaffold', 'NW_': 'patch'}
 
 
 class BuildError(RuntimeError):

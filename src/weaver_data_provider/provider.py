@@ -62,7 +62,18 @@ class BundleProvider:
         raise weaver.DataProviderError(f'{accession}: not in the reference data')
 
     def get_transcript(self, transcript_ac: str, reference_ac: str | None) -> weaver.TranscriptData:
+        """The model on `reference_ac`, or on the first sequence it is placed on: a chromosome where there is one.
+
+        Raises:
+            weaver.DataProviderError: If the transcript, or its placement on `reference_ac`, is not in the
+                reference data, or it is coding and no placement states its whole CDS, so that no `c.`
+                position on it can be resolved.
+        """
         bundle, transcript = self._transcript(transcript_ac)
+        if transcript.cds_undetermined:
+            raise weaver.DataProviderError(
+                f'{transcript_ac}: coding, but no placement on this assembly states its whole CDS'
+            )
         alignments = [a for a in transcript.alignments if reference_ac is None or a.chromosome == reference_ac]
         if not alignments:
             where = f' on {reference_ac}' if reference_ac else ''

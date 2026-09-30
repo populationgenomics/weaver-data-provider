@@ -10,6 +10,7 @@ its manifest was written over — an index rebuilt in place and interrupted befo
 from __future__ import annotations
 
 import collections
+import itertools
 import os
 import pathlib
 import re
@@ -46,6 +47,44 @@ def shard_record(path: pathlib.Path) -> store_pb2.Shard:
 
 
 _RELEASE_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _check_digests_resolve(bundle: bundle_pb2.GeneBundle, what: str) -> None:
+    """Every digest a transcript or protein cites is one of the bundle's sequences.
+
+    Raises:
+        build.BuildError: Naming the accessions whose digests the bundle does not carry.
+    """
+    carried = {sequence.digest for sequence in bundle.sequences}
+    dangling = [
+        f'{item.accession}.{item.version}'
+        for item in (*bundle.transcripts, *bundle.proteins)
+        if item.sequence_digest not in carried
+    ]
+    if dangling:
+        raise build.BuildError(f'{what}: cites sequences it does not carry, for {dangling}')
+
+
+_KIND_ORDER = list(build.SEQUENCE_KINDS)
+
+
+def _check_alignment_order(bundle: bundle_pb2.GeneBundle, what: str) -> None:
+    """Each transcript's alignments are one per sequence: chromosomes first, then scaffolds, then patches, by accession.
+
+    Raises:
+        build.BuildError: Naming a transcript whose alignments are on a sequence of no known kind, on one sequence
+            twice, or not in that order.
+    """
+    for transcript in bundle.transcripts:
+        names = [a.chromosome for a in transcript.alignments]
+        if any(name[:3] not in build.SEQUENCE_KINDS for name in names):
+            raise build.BuildError(f'{what}: {transcript.accession}.{transcript.version} is aligned on {names}')
+        keys = [(_KIND_ORDER.index(name[:3]), name) for name in names]
+        if any(a >= b for a, b in itertools.pairwise(keys)):
+            raise build.BuildError(
+                f'{what}: {transcript.accession}.{transcript.version} alignments are ordered {names}, not one per '
+                'sequence, chromosomes first, then scaffolds, then patches, each by accession'
+            )
 
 
 def write_shard(
@@ -87,7 +126,10 @@ def write_shard(
     try:
         with bagz.Writer(str(pending), _ZSTD) as writer:
             for bundle in bundles:
-                build.validated(bundle, f'{release} bundle {records} ({bundle.gene.symbol})')
+                what = f'{release} bundle {records} ({bundle.gene.symbol})'
+                build.validated(bundle, what)
+                _check_digests_resolve(bundle, what)
+                _check_alignment_order(bundle, what)
                 writer.write(bundle.SerializeToString())
                 records += 1
         if records == 0:

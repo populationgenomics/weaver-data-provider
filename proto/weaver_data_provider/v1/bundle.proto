@@ -62,14 +62,10 @@ enum Alphabet {
 
 // One gene: identity across nomenclatures, every transcript and protein held for it, and the
 // distinct sequences those cite. The record a lookup by symbol, accession, protein or digest returns.
+//
+// Every sequence_digest a transcript or protein cites is one of the bundle's sequences; the writer
+// checks it, not a CEL rule, whose cost is transcripts × sequences.
 message GeneBundle {
-  option (buf.validate.message).cel = {
-    id: "gene_bundle.digests_resolve"
-    message: "every sequence_digest a transcript or protein cites is one of the bundle's sequences"
-    expression:
-      "this.transcripts.all(t, this.sequences.exists(s, s.digest == t.sequence_digest)) "
-      "&& this.proteins.all(p, this.sequences.exists(s, s.digest == p.sequence_digest))"
-  };
   Gene gene = 1 [(buf.validate.field).required = true];
   repeated Transcript transcripts = 2;
   repeated Protein proteins = 3;
@@ -104,11 +100,19 @@ message Transcript {
   }];
   // Resolves in GeneBundle.sequences; a digest in any other spelling would join nothing.
   string sequence_digest = 7 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
-  Cds cds = 8; // absent for a non-coding transcript
+  // Absent for a non-coding transcript, and for a coding one with `cds_undetermined` set.
+  Cds cds = 8;
   string protein_accession = 9;
   uint32 protein_version = 10;
   string mane_partner = 11; // the other publisher's accession.version in the same MANE pair
-  repeated Alignment alignments = 12; // one per placement: a pseudoautosomal transcript has one on X and one on Y
+  // One per placement NCBI publishes, on any sequence of the assembly. Chromosomes (`NC_`) first,
+  // then scaffolds (`NT_`), then patches (`NW_`), each by accession, so the first is the chromosome
+  // placement where there is one; the writer refuses any other order.
+  repeated Alignment alignments = 12;
+  // A coding transcript no placement on this assembly states the whole CDS of: the record's coding
+  // sequence runs past what every sequence it is placed on carries. Its protein is still named. A
+  // provider refuses to model it rather than serve it as non-coding.
+  bool cds_undetermined = 13;
 }
 
 // The coding sequence as 0-based transcript indices, both inclusive: `start_index` is the first
@@ -128,7 +132,9 @@ message Alignment {
     defined_only: true
     not_in: [0]
   }];
-  string chromosome = 2 [(buf.validate.field).string.min_len = 1]; // the assembly's sequence accession, "NC_000017.11"
+  // The assembly sequence the placement is on: a chromosome ("NC_000017.11"), an alternate locus or
+  // unplaced scaffold ("NT_187633.1") or a patch ("NW_011332691.1").
+  string chromosome = 2 [(buf.validate.field).string.min_len = 1];
   Strand strand = 3 [(buf.validate.field).enum = {
     defined_only: true
     not_in: [0]
