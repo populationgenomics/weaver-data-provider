@@ -308,7 +308,8 @@ def _read_alignments(
     return placements
 
 
-def _gene_message(gene: _Gene, hgnc: dict[str, str] | None) -> bundle_pb2.Gene:
+def _gene_message(gene: _Gene, rows: list[dict[str, str]] | None) -> bundle_pb2.Gene:
+    hgnc, others = _common.hgnc_row(rows, gene.symbol)
     return _common.gene_message(
         gene.gene_id,
         hgnc,
@@ -317,7 +318,7 @@ def _gene_message(gene: _Gene, hgnc: dict[str, str] | None) -> bundle_pb2.Gene:
         ncbi_gene_id=gene.dbxrefs.get('GeneID', ''),
         ensembl_gene_id=_common.preferred(hgnc, 'ensembl_gene_id', gene.dbxrefs.get('Ensembl', '')),
         name=_common.preferred(hgnc, 'name', gene.description),
-        synonyms=gene.synonyms,
+        synonyms=[*gene.synonyms, *others],
     )
 
 
@@ -345,7 +346,7 @@ class _Loaded:
     sequences: dict[str, bytes]  # transcript records by versioned accession
     proteins: dict[str, bytes]
     placements: dict[tuple[str, str], _common.Placement]  # by (versioned accession, chromosome)
-    hgnc: dict[str, dict[str, str]]  # by NCBI GeneID
+    hgnc: dict[str, list[dict[str, str]]]  # by NCBI GeneID
     mane: dict[str, tuple[str, str]]
     record_cds: dict[str, tuple[int, int]]  # by versioned accession, 0-based inclusive
 

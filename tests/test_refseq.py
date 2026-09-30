@@ -295,6 +295,11 @@ def test_a_plus_strand_transcript_takes_its_exons_from_the_alignment(tmp_path: p
     assert _exons(alignment) == [(0, 20, 100, 119, '20='), (20, 50, 200, 229, '30=')]
 
 
+def test_a_placement_says_it_is_ncbis_published_alignment(tmp_path: pathlib.Path) -> None:
+    (transcript,) = _by_symbol(_release(tmp_path))['PLUS'].transcripts
+    assert transcript.alignments[0].source == bundle_pb2.ALIGNMENT_SOURCE_NCBI_BAM
+
+
 def test_a_plus_strand_cds_is_projected_onto_the_record(tmp_path: pathlib.Path) -> None:
     (transcript,) = _by_symbol(_release(tmp_path))['PLUS'].transcripts
     # genome 105 is exon 1's fifth base; genome 210 is exon 2's tenth, after exon 1's 20

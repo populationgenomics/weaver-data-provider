@@ -10,7 +10,10 @@ Ensembl publishes no alignments: a transcript is its annotated exons on the geno
 the genome spliced at them. The builder checks that record against the genome, exon by exon, and writes
 each exon's cigar from the comparison — `=`, or `X` where the record's base is not the genome's; a
 record whose length differs from its exons fails the build. The CDS is the annotation's, projected
-through those exons.
+through those exons, except where its first codon is incomplete: a CDS whose 5'-most span has a GFF phase
+begins mid-codon, so Ensembl numbers it from a codon the record does not hold — its CDS file pads it
+with `N`s and its protein begins `X` — and no start index in the record gives that numbering. Such a
+transcript is bundled with its protein but without a CDS, and counted in the build's report.
 
 What is and is not bundled. Every transcript the annotation places on a chromosome that has a record in
 the sequence sets. A transcript with no record — Ensembl's TEC and artifact models — is left out, and a
@@ -89,7 +92,14 @@ class _Transcript:
     minus: bool
     exons: list[tuple[int, int]] = dataclasses.field(default_factory=list)  # 1-based closed genome spans
     cds_spans: list[tuple[int, int]] = dataclasses.field(default_factory=list)
+    cds_phases: dict[int, int] = dataclasses.field(default_factory=dict)  # each CDS span's GFF phase, by its start
     protein: tuple[str, int] | None = None
+
+    @property
+    def starts_mid_codon(self) -> bool:
+        """Whether the CDS's 5'-most span has a phase: its first codon begins before the transcript does."""
+        first = max(self.cds_spans) if self.minus else min(self.cds_spans)
+        return self.cds_phases[first[0]] != 0
 
     @property
     def versioned(self) -> str:
@@ -125,6 +135,9 @@ def _add_feature(
     elif fields[2] == 'CDS':
         record = transcripts[attrs['Parent']]
         record.cds_spans.append((int(fields[3]), int(fields[4])))
+        if fields[7] not in ('0', '1', '2'):
+            raise build.BuildError(f'a CDS feature of {attrs["Parent"]} with phase {fields[7]!r}, not 0, 1 or 2')
+        record.cds_phases[int(fields[3])] = int(fields[7])
         record.protein = (attrs['protein_id'], int(attrs['version']))
 
 
@@ -225,7 +238,7 @@ class _Loaded:
     transcripts: dict[str, _Transcript]  # the ones with a record
     sequences: dict[str, bytes]  # records by versioned accession
     proteins: dict[str, bytes]
-    hgnc: dict[str, dict[str, str]]  # by Ensembl gene id
+    hgnc: dict[str, list[dict[str, str]]]  # by Ensembl gene id
     mane: dict[str, tuple[str, str]]  # by Ensembl accession.version
     chromosomes: dict[str, str]  # Ensembl's sequence names -> the genome's
     genome: genome_mod.Genome
@@ -258,10 +271,12 @@ def _load(release: Release) -> _Loaded:
         )
     transcripts = {t.versioned: t for t in annotated.values() if t.versioned in sequences}
     mane = _common.read_mane(release.mane, key='Ensembl_nuc', partner='RefSeq_nuc')
+    mid_codon = sum(1 for t in transcripts.values() if t.cds_spans and t.starts_mid_codon)
     elsewhere = sorted(v for v in sequences if v not in transcripts)
     elsewhere_mane = [v for v in elsewhere if v in mane]
     print(
-        f'Ensembl {release.release}: {len(transcripts)} transcripts on chromosomes; left out for having no record: '
+        f'Ensembl {release.release}: {len(transcripts)} transcripts on chromosomes; bundled without a CDS for '
+        f'beginning mid-codon: {mid_codon}; left out for having no record: '
         f'{_common.counted(collections.Counter(t.biotype for t in without_record))}; records for transcripts '
         f'placed off these chromosomes, left out: {len(elsewhere)}, of them MANE {len(elsewhere_mane)}'
         + (f': {", ".join(elsewhere_mane)}' if elsewhere_mane else ''),
@@ -280,7 +295,8 @@ def _load(release: Release) -> _Loaded:
     )
 
 
-def _gene_message(gene: _Gene, hgnc: dict[str, str] | None) -> bundle_pb2.Gene:
+def _gene_message(gene: _Gene, rows: list[dict[str, str]] | None) -> bundle_pb2.Gene:
+    hgnc, others = _common.hgnc_row(rows, gene.symbol)
     return _common.gene_message(
         gene.gene_id,
         hgnc,
@@ -289,7 +305,7 @@ def _gene_message(gene: _Gene, hgnc: dict[str, str] | None) -> bundle_pb2.Gene:
         ncbi_gene_id=_common.preferred(hgnc, 'entrez_id', ''),
         ensembl_gene_id=gene.gene_id,
         name=_common.preferred(hgnc, 'name', gene.description),
-        synonyms=[],
+        synonyms=others,
     )
 
 
@@ -315,7 +331,7 @@ def _add_transcript(
             transcript.tags.append(tag)
     placement = _placement(record, residues, loaded.chromosomes[record.seqid], loaded.genome)
     transcript.alignments.append(_common.alignment(loaded.assembly, placement, bundle_pb2.ALIGNMENT_SOURCE_ANNOTATION))
-    if record.cds_spans:
+    if record.cds_spans and not record.starts_mid_codon:
         transcript.cds.CopyFrom(_common.project_cds(record.versioned, record.cds_spans, placement))
     if record.protein is not None:
         _common.add_protein(bundle, digests, transcript, record.protein, loaded.proteins)
