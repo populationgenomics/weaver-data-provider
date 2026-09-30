@@ -52,6 +52,9 @@ enum AlignmentSource {
   ALIGNMENT_SOURCE_NCBI_BAM = 1; // NCBI's RefSeq transcript alignments (knownrefseq/modelrefseq BAM)
   ALIGNMENT_SOURCE_MANE_PARTNER = 2; // copied from the sequence-identical RefSeq MANE partner
   ALIGNMENT_SOURCE_COMPUTED = 3; // aligned by us at build time; placement of indels is ours
+  // The publisher's annotated exons, each cigar from comparing the record with the genome base by
+  // base: = and X only, since a record whose length differs from its exons is refused, not aligned.
+  ALIGNMENT_SOURCE_ANNOTATION = 4;
 }
 
 enum Alphabet {

@@ -47,6 +47,7 @@ class AlignmentSource(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ALIGNMENT_SOURCE_NCBI_BAM: _ClassVar[AlignmentSource]
     ALIGNMENT_SOURCE_MANE_PARTNER: _ClassVar[AlignmentSource]
     ALIGNMENT_SOURCE_COMPUTED: _ClassVar[AlignmentSource]
+    ALIGNMENT_SOURCE_ANNOTATION: _ClassVar[AlignmentSource]
 
 class Alphabet(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -75,6 +76,7 @@ ALIGNMENT_SOURCE_UNSPECIFIED: AlignmentSource
 ALIGNMENT_SOURCE_NCBI_BAM: AlignmentSource
 ALIGNMENT_SOURCE_MANE_PARTNER: AlignmentSource
 ALIGNMENT_SOURCE_COMPUTED: AlignmentSource
+ALIGNMENT_SOURCE_ANNOTATION: AlignmentSource
 ALPHABET_UNSPECIFIED: Alphabet
 ALPHABET_NUCLEOTIDE: Alphabet
 ALPHABET_PROTEIN: Alphabet
