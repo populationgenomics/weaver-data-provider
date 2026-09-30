@@ -10,14 +10,16 @@ builder takes that alignment exon by exon rather than deriving one, so the posit
 ClinVar's names and VariantValidator's projections follow.
 
 Every placement NCBI publishes is kept — on a chromosome, an alternate locus or a patch — so a gene the primary assembly
-lacks is served where it is; [`docs/design/placements.md`](docs/design/placements.md) has the reasons.
+lacks is served where it is. An Ensembl transcript is placed at its exons, after a check that its record is the genome
+spliced there. [`docs/design/placements.md`](docs/design/placements.md) has the reasons.
 
 A store is one record per gene — every transcript, its protein, its alignments and the sequences they cite — in
 [bagz](https://github.com/google-deepmind/bagz) files with sorted key and interval tables that are read into memory at
 open. A lookup is a search over bytes in memory and one ranged read, from local disk or `gs://`.
 
 ```sh
-weaver-data-build refseq ...  # one release's bundles, as a shard
+weaver-data-build refseq ...  # one RefSeq release's bundles, as a shard
+weaver-data-build ensembl ... # one Ensembl release's, placed at its exons and checked against the genome
 weaver-data-build index ...   # the index and manifest over an ordered list of shards
 weaver-data-build genome ...  # the assembly, cut into compressed blocks
 ```

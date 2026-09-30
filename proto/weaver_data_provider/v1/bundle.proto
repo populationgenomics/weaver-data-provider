@@ -45,13 +45,18 @@ enum Strand {
   STRAND_MINUS = 2;
 }
 
-// Where an alignment's exon cigars came from. Only NCBI publishes alignments; the others are
-// derived, and a consumer projecting a coordinate can see which placements are published.
+// Where an alignment's exon cigars came from, so a consumer projecting a coordinate can see whether
+// a placement is the publisher's.
 enum AlignmentSource {
   ALIGNMENT_SOURCE_UNSPECIFIED = 0;
   ALIGNMENT_SOURCE_NCBI_BAM = 1; // NCBI's RefSeq transcript alignments (knownrefseq/modelrefseq BAM)
-  ALIGNMENT_SOURCE_MANE_PARTNER = 2; // copied from the sequence-identical RefSeq MANE partner
+  // NCBI's alignment of the RefSeq MANE partner, copied after a check that the sequence NCBI
+  // aligned is this record and that the alignment's matches are the record's bases on the genome.
+  ALIGNMENT_SOURCE_MANE_PARTNER = 2;
   ALIGNMENT_SOURCE_COMPUTED = 3; // aligned by us at build time; placement of indels is ours
+  // The annotation's own exon coordinates: the record is the genome spliced at them, checked at
+  // build, so every cigar is a match. Ensembl's placements.
+  ALIGNMENT_SOURCE_ANNOTATION = 4;
 }
 
 enum Alphabet {
@@ -93,7 +98,9 @@ message Transcript {
     defined_only: true
     not_in: [0]
   }];
-  string biotype = 5; // the annotation's feature type: mRNA, lnc_RNA, ...
+  // The annotation's own classification: the feature type for RefSeq (mRNA, lnc_RNA), Ensembl's
+  // biotype for Ensembl (protein_coding, nonsense_mediated_decay, lncRNA).
+  string biotype = 5;
   repeated Tag tags = 6 [(buf.validate.field).repeated.items.enum = {
     defined_only: true
     not_in: [0]
@@ -109,9 +116,10 @@ message Transcript {
   // then scaffolds (`NT_`), then patches (`NW_`), each by accession, so the first is the chromosome
   // placement where there is one; the writer refuses any other order.
   repeated Alignment alignments = 12;
-  // A coding transcript no placement on this assembly states the whole CDS of: the record's coding
-  // sequence runs past what every sequence it is placed on carries. Its protein is still named. A
-  // provider refuses to model it rather than serve it as non-coding.
+  // A coding transcript whose whole CDS no aligned placement states: a RefSeq record whose coding
+  // sequence runs past what every sequence it is placed on carries, or an Ensembl transcript whose
+  // CDS the annotation leaves incomplete at an end. Its protein is still named. A provider refuses
+  // to model it rather than serve it as non-coding.
   bool cds_undetermined = 13;
 }
 

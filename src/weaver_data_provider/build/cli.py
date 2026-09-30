@@ -4,6 +4,13 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --annotation genomic.gff.gz --transcripts rna.fna.gz --proteins protein.faa.gz \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
+    weaver-data-build ensembl --assembly GRCh38 --release 116 \
+        --annotation Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gff3.gz \
+        --completeness Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gtf.gz \
+        --transcripts Homo_sapiens.GRCh38.cdna.all.fa.gz --transcripts Homo_sapiens.GRCh38.ncrna.fa.gz \
+        --proteins Homo_sapiens.GRCh38.pep.all.fa.gz --genome genome/ \
+        --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
+        --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
     weaver-data-build index --assembly GRCh38 --out store/ \
         shards/RS_2023_10-1a2b3c4d.bagz shards/RS_2024_08-5e6f7a8b.bagz
     weaver-data-build genome --assembly GRCh38 --fasta genomic.fna.gz --out genome/
@@ -18,8 +25,8 @@ import pathlib
 import sys
 
 from weaver_data_provider import build
+from weaver_data_provider.build import ensembl, refseq
 from weaver_data_provider.build import genome as genome_build
-from weaver_data_provider.build import refseq
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
 
@@ -39,6 +46,27 @@ def _refseq(args: argparse.Namespace) -> None:
     )
     path = store_build.write_shard(
         refseq.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
+    )
+    record = store_build.shard_record(path)
+    print(f'{path}  {record.records} bundles', file=sys.stderr)
+    print(path)
+
+
+def _ensembl(args: argparse.Namespace) -> None:
+    release = ensembl.Release(
+        assembly=_ASSEMBLIES[args.assembly],
+        release=args.release,
+        annotation=args.annotation,
+        completeness=args.completeness,
+        transcripts=tuple(args.transcripts),
+        proteins=args.proteins,
+        genome=args.genome,
+        alignments=tuple(args.alignments),
+        hgnc=args.hgnc,
+        mane=args.mane,
+    )
+    path = store_build.write_shard(
+        ensembl.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
     )
     record = store_build.shard_record(path)
     print(f'{path}  {record.records} bundles', file=sys.stderr)
@@ -82,6 +110,40 @@ def main(argv: list[str] | None = None) -> None:
         '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
     )
     cut.set_defaults(run=_refseq)
+
+    ens = commands.add_parser('ensembl', help='cut one Ensembl release into a shard')
+    ens.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
+    ens.add_argument('--release', required=True, help="Ensembl's release number, 116")
+    ens.add_argument('--annotation', type=pathlib.Path, required=True, help='the chr_patch_hapl_scaff GFF3, gzipped')
+    ens.add_argument(
+        '--completeness',
+        type=pathlib.Path,
+        required=True,
+        help='the chr_patch_hapl_scaff GTF, gzipped, whose tags say whether a CDS is complete',
+    )
+    ens.add_argument(
+        '--transcripts',
+        type=pathlib.Path,
+        action='append',
+        required=True,
+        help='a cDNA or ncRNA FASTA, gzipped; repeat',
+    )
+    ens.add_argument('--proteins', type=pathlib.Path, required=True, help='the peptide FASTA, gzipped')
+    ens.add_argument('--genome', type=pathlib.Path, required=True, help='the assembly as `genome` cut it')
+    ens.add_argument(
+        '--alignments',
+        type=pathlib.Path,
+        action='append',
+        required=True,
+        help="NCBI's RefSeq alignment BAM with its .bai, for the MANE partners' placements; repeat",
+    )
+    ens.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
+    ens.add_argument('--mane', type=pathlib.Path, required=True, help='the MANE summary, gzipped TSV')
+    ens.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
+    ens.add_argument(
+        '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
+    )
+    ens.set_defaults(run=_ensembl)
 
     index = commands.add_parser('index', help='write the index and manifest over shards, in the order given')
     index.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
