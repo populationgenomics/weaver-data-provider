@@ -16,8 +16,8 @@ from weaver_data_provider import store as store_mod
 from weaver_data_provider.v1 import bundle_pb2
 
 _GENOMIC = ('NC_', 'NT_', 'NW_')
-_TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_')
-_PROTEIN = ('NP_', 'XP_', 'YP_')
+_TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
+_PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:

@@ -4,6 +4,11 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --annotation genomic.gff.gz --transcripts rna.fna.gz --proteins protein.faa.gz \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --records rna.gbff.gz --shards shards/
+    weaver-data-build ensembl --assembly GRCh38 --release ensembl_116 \
+        --annotation Homo_sapiens.GRCh38.116.chr.gff3.gz \
+        --transcripts Homo_sapiens.GRCh38.cdna.all.fa.gz --transcripts Homo_sapiens.GRCh38.ncrna.fa.gz \
+        --proteins Homo_sapiens.GRCh38.pep.all.fa.gz --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz \
+        --assembly-report GCF_000001405.40_GRCh38.p14_assembly_report.txt --genome genome/ --shards shards/
     weaver-data-build index --assembly GRCh38 --out store/ \
         shards/RS_2023_10-1a2b3c4d.bagz shards/RS_2024_08-5e6f7a8b.bagz
     weaver-data-build genome --assembly GRCh38 --fasta genomic.fna.gz --out genome/
@@ -19,8 +24,8 @@ import sys
 import warnings
 
 from weaver_data_provider import build
+from weaver_data_provider.build import ensembl, refseq
 from weaver_data_provider.build import genome as genome_build
-from weaver_data_provider.build import refseq
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
 
@@ -41,6 +46,26 @@ def _refseq(args: argparse.Namespace) -> None:
     )
     path = store_build.write_shard(
         refseq.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
+    )
+    record = store_build.shard_record(path)
+    print(f'{path}  {record.records} bundles', file=sys.stderr)
+    print(path)
+
+
+def _ensembl(args: argparse.Namespace) -> None:
+    release = ensembl.Release(
+        assembly=_ASSEMBLIES[args.assembly],
+        release=args.release,
+        annotation=args.annotation,
+        transcripts=tuple(args.transcripts),
+        proteins=args.proteins,
+        hgnc=args.hgnc,
+        mane=args.mane,
+        assembly_report=args.assembly_report,
+        genome=args.genome,
+    )
+    path = store_build.write_shard(
+        ensembl.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
     )
     record = store_build.shard_record(path)
     print(f'{path}  {record.records} bundles', file=sys.stderr)
@@ -87,6 +112,26 @@ def main(argv: list[str] | None = None) -> None:
         '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
     )
     cut.set_defaults(run=_refseq)
+
+    cut = commands.add_parser('ensembl', help='cut one Ensembl release into a shard')
+    cut.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
+    cut.add_argument('--release', required=True, help='a name for the release, ensembl_116')
+    cut.add_argument('--annotation', type=pathlib.Path, required=True, help='the primary-chromosome GFF3, gzipped')
+    cut.add_argument(
+        '--transcripts', type=pathlib.Path, action='append', required=True, help='cDNA FASTA, gzipped; repeat for ncRNA'
+    )
+    cut.add_argument('--proteins', type=pathlib.Path, required=True, help='peptide FASTA, gzipped')
+    cut.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
+    cut.add_argument('--mane', type=pathlib.Path, required=True, help='the MANE summary, gzipped TSV')
+    cut.add_argument(
+        '--assembly-report', type=pathlib.Path, required=True, help="NCBI's assembly report, naming the chromosomes"
+    )
+    cut.add_argument('--genome', type=pathlib.Path, required=True, help='the genome built for this assembly')
+    cut.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
+    cut.add_argument(
+        '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
+    )
+    cut.set_defaults(run=_ensembl)
 
     index = commands.add_parser('index', help='write the index and manifest over shards, in the order given')
     index.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
