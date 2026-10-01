@@ -350,6 +350,24 @@ def _replacing(gff: list[str], rows: list[str], with_rows: list[str]) -> list[st
     return [*before, *with_rows, *after]
 
 
+def _alt_open(*, start: bool = False, end: bool = False) -> tuple[list[str], dict[str, str]]:
+    """ALT's annotation and records with its CDS run off the record's start or end, as NCBI publishes such a model.
+
+    The annotation's CDS row is open at the same end, so no placement states a bound there to check.
+    """
+    first, last = (1 if start else 3), (10 if end else 8)
+    attrs = {'partial': 'true'} if start or end else {}
+    if start:
+        attrs['start_range'] = f'.,{first}'
+    if end:
+        attrs['end_range'] = f'{last},.'
+    (row,) = _rows(GFF, ID='cds-NP_000050.1')
+    opened = _row(ALT_LOCUS, 'CDS', first, last, '+', ID='cds-NP_000050.1', Parent='rna-NM_000050.1',
+                  protein_id='NP_000050.1', **attrs)  # fmt: skip
+    location = f'{"<" if start else ""}{first}..{">" if end else ""}{last}'
+    return _replacing(GFF, [row], [opened]), {**RECORD_CDS, 'NM_000050.1': location}
+
+
 def _exons(alignment: bundle_pb2.Alignment) -> list[tuple[int, int, int, int, str]]:
     return [
         (e.transcript_start, e.transcript_end, e.genome_start, e.genome_end_inclusive, e.cigar) for e in alignment.exons
@@ -551,29 +569,44 @@ def test_a_minus_strand_cds_open_at_its_high_genome_end_is_not_checked(tmp_path:
 
 
 @pytest.mark.parametrize(
-    ('location', 'open_ends'),
-    [('<3..8', (True, False)), ('3..>8', (False, True)), ('<3..>8', (True, True))],
+    ('start', 'end', 'bounds'),
+    [(True, False, (0, 7)), (False, True, (2, 9)), (True, True, (0, 9))],
     ids=['open start', 'open end', 'open both'],
 )
 def test_a_record_cds_open_at_an_end_keeps_its_bounds_and_says_which_end(
-    tmp_path: pathlib.Path, location: str, open_ends: tuple[bool, bool]
+    tmp_path: pathlib.Path, start: bool, end: bool, bounds: tuple[int, int]
 ) -> None:
-    (transcript,) = _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location}))[
-        'ALT'
-    ].transcripts
+    gff, record_cds = _alt_open(start=start, end=end)
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
     cds = transcript.cds
-    assert (cds.start_index, cds.end_index_inclusive, cds.start_open, cds.end_open) == (2, 7, *open_ends)
+    assert (cds.start_index, cds.end_index_inclusive, cds.start_open, cds.end_open) == (*bounds, start, end)
+
+
+@pytest.mark.parametrize(
+    ('location', 'error'),
+    [('<3..8', r'open at its start, which is index 2, not 0'), ('3..>8', r'open at its end, which is index 7, not 9')],
+    ids=['open start', 'open end'],
+)
+def test_an_open_cds_end_short_of_the_records_edge_fails_the_build(
+    tmp_path: pathlib.Path, location: str, error: str
+) -> None:
+    # bases beyond an open end would be coding by the record yet numbered from nothing
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location})
+    with pytest.raises(build.BuildError, match=rf'NM_000050\.1: CDS {error}'):
+        list(refseq.bundles(release))
 
 
 def test_a_transcript_with_an_open_cds_keeps_its_protein(tmp_path: pathlib.Path) -> None:
-    (transcript,) = _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': '<3..8'}))['ALT'].transcripts
+    gff, record_cds = _alt_open(start=True)
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
     assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
 
 
 def test_the_report_counts_the_records_that_leave_a_cds_end_open(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    list(refseq.bundles(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': '<3..8'})))
+    gff, record_cds = _alt_open(start=True)
+    list(refseq.bundles(_release(tmp_path, gff=gff, record_cds=record_cds)))
     assert "coding transcripts whose record leaves a CDS end open: 1 (5' 1);" in capsys.readouterr().err
 
 
@@ -803,22 +836,23 @@ def test_a_sequence_a_transcript_is_not_placed_on_is_refused_by_name(tmp_path: p
         _provider(tmp_path).get_transcript('NM_000050.1', CHROM)
 
 
-def _open_alt(tmp_path: pathlib.Path, location: str) -> provider_mod.BundleProvider:
-    """The provider over a release whose ALT record states its CDS at `location`."""
-    return _provider(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location})
+def _open_alt(tmp_path: pathlib.Path, *, start: bool = False, end: bool = False) -> provider_mod.BundleProvider:
+    """The provider over a release whose ALT CDS runs off its record at the ends named."""
+    gff, record_cds = _alt_open(start=start, end=end)
+    return _provider(tmp_path, gff=gff, record_cds=record_cds)
 
 
 @pytest.mark.parametrize(
-    ('location', 'open_ends'),
-    [('3..8', (False, False)), ('<3..8', (True, False)), ('3..>8', (False, True))],
+    ('start', 'end', 'bounds'),
+    [(False, False, (2, 7)), (True, False, (0, 7)), (False, True, (2, 9))],
     ids=['closed', 'open start', 'open end'],
 )
 def test_the_model_says_which_cds_ends_are_open(
-    tmp_path: pathlib.Path, location: str, open_ends: tuple[bool, bool]
+    tmp_path: pathlib.Path, start: bool, end: bool, bounds: tuple[int, int]
 ) -> None:
-    model = _open_alt(tmp_path, location).get_transcript('NM_000050.1', None)
-    assert (model['cds_start_index'], model['cds_end_index']) == (2, 7)
-    assert (model.get('cds_start_open'), model.get('cds_end_open')) == open_ends
+    model = _open_alt(tmp_path, start=start, end=end).get_transcript('NM_000050.1', None)
+    assert (model['cds_start_index'], model['cds_end_index']) == bounds
+    assert (model.get('cds_start_open'), model.get('cds_end_open')) == (start, end)
 
 
 def test_a_noncoding_model_has_no_open_cds_end(tmp_path: pathlib.Path) -> None:
@@ -827,27 +861,27 @@ def test_a_noncoding_model_has_no_open_cds_end(tmp_path: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ('location', 'variant', 'end'),
-    [('<3..8', 'NM_000050.1:c.1G>C', "5'"), ('3..>8', 'NM_000050.1:c.*1A>C', "3'")],
+    ('open_end', 'variant', 'end'),
+    [({'start': True}, 'NM_000050.1:c.1A>C', "5'"), ({'end': True}, 'NM_000050.1:c.*1A>C', "3'")],
     ids=['c. from an open start', 'c.* from an open end'],
 )
 def test_a_position_numbered_from_an_open_cds_end_is_refused(
-    tmp_path: pathlib.Path, location: str, variant: str, end: str
+    tmp_path: pathlib.Path, open_end: dict[str, bool], variant: str, end: str
 ) -> None:
-    mapper = weaver.VariantMapper(_open_alt(tmp_path, location))
+    mapper = weaver.VariantMapper(_open_alt(tmp_path, **open_end))
     with pytest.raises(weaver.ValidationError, match=f'open at the {end} end'):
         mapper.c_to_g(weaver.parse(variant), None)
 
 
 @pytest.mark.parametrize(
-    ('location', 'variant', 'projected'),
-    [('3..>8', 'NM_000050.1:c.1G>C', 'g.3G>C'), ('<3..8', 'NM_000050.1:c.*1A>C', 'g.9A>C')],
+    ('open_end', 'variant', 'projected'),
+    [({'end': True}, 'NM_000050.1:c.1G>C', 'g.3G>C'), ({'start': True}, 'NM_000050.1:c.*1A>C', 'g.9A>C')],
     ids=['c. on an open end', 'c.* on an open start'],
 )
 def test_a_position_numbered_from_the_closed_end_of_an_open_cds_projects(
-    tmp_path: pathlib.Path, location: str, variant: str, projected: str
+    tmp_path: pathlib.Path, open_end: dict[str, bool], variant: str, projected: str
 ) -> None:
-    mapped = weaver.VariantMapper(_open_alt(tmp_path, location)).c_to_g(weaver.parse(variant), None)
+    mapped = weaver.VariantMapper(_open_alt(tmp_path, **open_end)).c_to_g(weaver.parse(variant), None)
     assert mapped.format() == f'{ALT_LOCUS}:{projected}'
 
 
@@ -877,8 +911,23 @@ def test_a_record_cds_where_the_annotation_gives_none_warns(tmp_path: pathlib.Pa
 
 def test_a_record_cds_outside_its_sequence_fails_the_build(tmp_path: pathlib.Path) -> None:
     release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..300'})
-    with pytest.raises(build.BuildError, match=r'NM_000010\.2: its record states a CDS 4\.\.299 outside its sequence'):
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: CDS 4\.\.299 outside its 50-base sequence'):
         list(refseq.bundles(release))
+
+
+def test_a_closed_cds_read_from_other_than_its_first_base_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # a whole CDS starts with its start codon, so it reads from its first base
+    shifted = '5..30\n                     /codon_start=2'
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': shifted})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: a CDS with a closed start but /codon_start=2'):
+        list(refseq.bundles(release))
+
+
+def test_an_open_cds_may_read_from_its_second_base(tmp_path: pathlib.Path) -> None:
+    gff, record_cds = _alt_open(start=True)
+    record_cds['NM_000050.1'] += '\n                     /codon_start=2'
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
+    assert transcript.cds.start_open
 
 
 def test_a_frameshifted_cds_is_taken_by_its_outer_bounds(tmp_path: pathlib.Path) -> None:

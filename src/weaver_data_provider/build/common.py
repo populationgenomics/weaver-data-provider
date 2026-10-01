@@ -193,6 +193,25 @@ def counted(counts: collections.Counter[str]) -> str:
     return f'{counts.total()} (' + ', '.join(f'{kind} {n}' for kind, n in counts.most_common()) + ')'
 
 
+def check_cds(versioned: str, cds: bundle_pb2.Cds, length: int) -> None:
+    """A CDS lies inside its record of `length` bases, and an open end is at the record's edge.
+
+    Raises:
+        build.BuildError: If the CDS runs outside the record, or an end marked open is not its
+            first or last base, which would leave bases no position can be numbered from.
+    """
+    if not 0 <= cds.start_index <= cds.end_index_inclusive < length:
+        raise build.BuildError(
+            f'{versioned}: CDS {cds.start_index}..{cds.end_index_inclusive} outside its {length}-base sequence'
+        )
+    if cds.start_open and cds.start_index != 0:
+        raise build.BuildError(f'{versioned}: CDS open at its start, which is index {cds.start_index}, not 0')
+    if cds.end_open and cds.end_index_inclusive != length - 1:
+        raise build.BuildError(
+            f'{versioned}: CDS open at its end, which is index {cds.end_index_inclusive}, not {length - 1}'
+        )
+
+
 def open_ends(start_open: bool, end_open: bool) -> str | None:
     """Which ends of a CDS run off its record, as the build's report counts them; None for neither."""
     return {(True, False): "5'", (False, True): "3'", (True, True): 'both'}.get((start_open, end_open))

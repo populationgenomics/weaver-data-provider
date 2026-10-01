@@ -464,6 +464,29 @@ def test_a_cds_end_the_gtf_tags_not_found_is_open(
     assert (transcript.protein_accession, transcript.protein_version) == ('ENSP00000000040', 1)
 
 
+@pytest.mark.parametrize(
+    ('tag', 'error'),
+    [
+        ('cds_start_NF', 'open at its start, which is index 3, not 0'),
+        ('cds_end_NF', 'open at its end, which is index 26, not 49'),
+    ],
+)
+def test_an_open_cds_end_short_of_the_records_edge_fails_the_build(
+    tmp_path: pathlib.Path, tag: str, error: str
+) -> None:
+    # PLUSE's CDS has UTRs either side; an end said to run off the record cannot be inside it
+    gtf = [_gtf_row('ENST00000000010', '2', tag) if 'ENST00000000010' in line else line for line in GTF]
+    with pytest.raises(build.BuildError, match=rf'ENST00000000010\.2: CDS {error}'):
+        list(ensembl.bundles(_release(tmp_path, gtf=gtf)))
+
+
+def test_the_report_counts_the_cds_ends_the_gtf_leaves_open(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    list(ensembl.bundles(_release(tmp_path)))
+    assert "coding transcripts whose CDS the GTF leaves an end open: 1 (5' 1);" in capsys.readouterr().err
+
+
 def test_completeness_is_the_gtfs_statement_whatever_the_cds_reads(tmp_path: pathlib.Path) -> None:
     # PLUSE's CDS cut one codon short no longer ends in a stop; the GTF still says it is complete
     short = _cds(CHROM_NAME, 201, 204, '+', '1', 'ENST00000000010', 'ENSP00000000010', '1')

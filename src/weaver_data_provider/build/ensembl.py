@@ -469,6 +469,7 @@ def _add_transcript(
     if transcript.cds:
         message.cds.start_index, message.cds.end_index_inclusive = _cds_indices(transcript, own)
         message.cds.start_open, message.cds.end_open = loaded.open_cds[transcript.versioned]
+        common.check_cds(transcript.versioned, message.cds, len(residues))
         if (kind := common.open_ends(message.cds.start_open, message.cds.end_open)) is not None:
             tally.open_cds[kind] += 1
     if transcript.protein is not None:

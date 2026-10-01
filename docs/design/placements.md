@@ -127,7 +127,7 @@ coding one without a sequence fails the build, since that is a missing input, no
 Whether a CDS is complete is a fact Ensembl publishes only in its GTF, as the `cds_start_NF` and `cds_end_NF` tags; the
 GFF3 the builder reads for structure has coordinates and phase but no such statement, and phase cannot stand in for one,
 because a 5'-truncated CDS whose missing part is a whole number of codons has phase zero on its first row — about 5,000
-of release 116's 13,000 start-not-found CDSs do. So the GTF is an input, a coding transcript it does not name fails the
+of release 116's 14,500 start-not-found CDSs do. So the GTF is an input, a coding transcript it does not name fails the
 build, and an end it tags not found is open, as a RefSeq record's `<` or `>` is. About one coding transcript in twelve
 on release 116 is such a fragment, and more of them are open at the 3' end than at the 5'.
 

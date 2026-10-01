@@ -242,13 +242,22 @@ def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
     Raises:
         build.BuildError: If a record states more than one CDS, a CDS before any VERSION line, a VERSION
             line with no accession, a location of a shape `_parse_record_cds` refuses, or the file ends
-            inside a location.
+            inside a location, or a CDS with a closed start reads from other than its first base
+            (`/codon_start` 2 or 3), which no start codon can do.
     """
     out: dict[str, _RecordCds] = {}
     version: str | None = None
+    in_cds: str | None = None  # the record whose CDS feature's qualifiers are being read
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         for line in fh:
-            if line.startswith('LOCUS'):
+            if in_cds is not None and not line.startswith(' ' * 21):
+                in_cds = None
+            if in_cds is not None:
+                qualifier = line.strip()
+                shifted = qualifier.startswith('/codon_start=') and qualifier != '/codon_start=1'
+                if shifted and not out[in_cds].start_open:
+                    raise build.BuildError(f'{in_cds}: a CDS with a closed start but {qualifier}')
+            elif line.startswith('LOCUS'):
                 version = None  # a record without a VERSION line must not inherit the previous one's
             elif line.startswith('VERSION'):
                 fields = line.split()
@@ -267,6 +276,7 @@ def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
                 if version in out:
                     raise build.BuildError(f'{path}: {version} states more than one CDS')
                 out[version] = _parse_record_cds(version, location)
+                in_cds = version
     return out
 
 
@@ -493,12 +503,9 @@ def _add_transcript(
         aligned.append(placement)
     stated = loaded.record_cds.get(versioned)
     if stated is not None:
-        if not 0 <= stated.start < stated.end < len(residues):
-            raise build.BuildError(
-                f'{versioned}: its record states a CDS {stated.start}..{stated.end} outside its sequence'
-            )
         transcript.cds.start_index, transcript.cds.end_index_inclusive = stated.start, stated.end
         transcript.cds.start_open, transcript.cds.end_open = stated.start_open, stated.end_open
+        common.check_cds(versioned, transcript.cds, len(residues))
         _cross_check(versioned, record, aligned, stated)
     if record.protein is not None:
         transcript.protein_accession, transcript.protein_version = record.protein
