@@ -4,6 +4,10 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --annotation genomic.gff.gz --transcripts rna.fna.gz --proteins protein.faa.gz \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --records rna.gbff.gz --shards shards/
+    weaver-data-build historical --assembly GRCh38 --release RS_2023_03-historical \\
+        --annotation RS_2023_03_genomic.gff.gz --records RS_2023_03_knownrefseq_rna.gbff.gz \\
+        --alignments RS_2023_03_knownrefseq_alns.bam --status status.tsv \\
+        --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
     weaver-data-build ensembl --assembly GRCh38 --release 116 \
         --annotation Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gff3.gz \
         --completeness Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gtf.gz \
@@ -45,6 +49,25 @@ def _refseq(args: argparse.Namespace) -> None:
         hgnc=args.hgnc,
         mane=args.mane,
         records=args.records,
+    )
+    path = store_build.write_shard(
+        refseq.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
+    )
+    record = store_build.shard_record(path)
+    print(f'{path}  {record.records} bundles', file=sys.stderr)
+    print(path)
+
+
+def _historical(args: argparse.Namespace) -> None:
+    release = refseq.Release(
+        assembly=_ASSEMBLIES[args.assembly],
+        release=args.release,
+        annotation=args.annotation,
+        alignments=tuple(args.alignments),
+        hgnc=args.hgnc,
+        mane=args.mane,
+        records=args.records,
+        status=args.status,
     )
     path = store_build.write_shard(
         refseq.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
@@ -128,6 +151,40 @@ def main(argv: list[str] | None = None) -> None:
         '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
     )
     cut.set_defaults(run=_refseq)
+
+    historical = commands.add_parser(
+        'historical',
+        help="cut NCBI's historical set of retired RefSeq transcripts, published beside an annotation release, "
+        'into a shard',
+    )
+    historical.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
+    historical.add_argument(
+        '--release',
+        required=True,
+        help='a name for the set, after the release it is anchored on: RS_2023_03-historical',
+    )
+    historical.add_argument('--annotation', type=pathlib.Path, required=True, help="the set's GFF3, gzipped")
+    historical.add_argument(
+        '--records', type=pathlib.Path, required=True, help="the set's GenBank records (knownrefseq_rna.gbff), gzipped"
+    )
+    historical.add_argument(
+        '--alignments', type=pathlib.Path, action='append', required=True, help="the set's alignment BAM with its .bai"
+    )
+    historical.add_argument(
+        '--status',
+        type=pathlib.Path,
+        required=True,
+        help="each version's status in Entrez, TSV, as scripts/fetch_refseq_status.py writes it",
+    )
+    historical.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
+    historical.add_argument('--mane', type=pathlib.Path, required=True, help='the MANE summary, gzipped TSV')
+    historical.add_argument(
+        '--shards', type=pathlib.Path, required=True, help='the directory the shard is written into'
+    )
+    historical.add_argument(
+        '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
+    )
+    historical.set_defaults(run=_historical)
 
     ens = commands.add_parser('ensembl', help='cut one Ensembl release into a shard')
     ens.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)

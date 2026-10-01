@@ -154,10 +154,16 @@ class BundleProvider:
         return weaver.IdentifierType.Unknown
 
     def get_transcripts_for_region(self, chrom: str, start: int, end: int) -> list[str]:
-        """Versioned accessions of transcripts placed over the 0-based closed interval, introns included."""
+        """Versioned accessions of current transcripts placed over the 0-based closed interval, introns included.
+
+        A retired version — one a historical shard holds as superseded or suppressed — is served when
+        named, but not listed here: a region's answer is what the publisher recommends today.
+        """
         found: dict[str, None] = {}
         for bundle in self._store.overlapping(chrom, start, end):
             for transcript in bundle.transcripts:
+                if transcript.status != bundle_pb2.TRANSCRIPT_STATUS_CURRENT:
+                    continue
                 if any(
                     a.chromosome == chrom
                     and min(e.genome_start for e in a.exons) <= end
