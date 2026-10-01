@@ -82,9 +82,10 @@ projected through its alignment to transcript indices, and where they land elsew
 build warns, naming the transcript and the sequence, and keeps the record's CDS. A placement with an open outer end
 states no bound there and is not checked. On RS_2025_08 the build warns nine times, every one a NIPA2 transcript on the
 fix patch `NW_021160017.1`, whose alignment has indels in the last exon and which ends the CDS one base before the
-record does; on chromosome 15 the same transcripts agree. Every stored CDS translates to its record's protein except
-eleven the record itself says will not: ten joined CDSs, which read through a ribosomal frameshift, and VEGF-Ax, whose
-record declares its stop codon read as serine.
+record does; on chromosome 15 the same transcripts agree. Every stored CDS translates to its record's protein except 27
+the record itself says will not: ten joined CDSs, which read through a ribosomal frameshift; sixteen whose record
+declares an internal stop codon read through, as serine for VEGF-Ax and as an unknown residue for the rest; and one
+whose stop codon the polyA tail completes.
 
 The record is a required input, and the build fails where it is silent or inconsistent: a transcript the annotation
 calls coding whose record states no CDS, a record CDS outside the record's sequence, two CDSs in one record. A coding
