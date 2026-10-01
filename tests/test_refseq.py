@@ -1357,3 +1357,14 @@ def test_a_record_not_closed_before_the_next_fails_the_build(tmp_path: pathlib.P
 def test_a_file_ending_inside_a_record_fails_the_build(tmp_path: pathlib.Path) -> None:
     with pytest.raises(build.BuildError, match=r'ends inside the record of NM_000070\.1'):
         list(refseq.bundles(_rewritten_records(_release(tmp_path), lambda text: text[: text.rindex('//\n')])))
+
+
+def test_the_historical_set_leaves_out_a_record_whose_open_cds_end_is_not_its_last_base(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ALT's record, 10 bases, marks its CDS open at an end two bases short of the record's
+    release = _historical(tmp_path)
+    cds = {**RECORD_CDS, 'NM_000050.1': '3..>8'}
+    _genbank(release.records, TRANSCRIPTS, cds, proteins=RECORD_PROTEINS, sequences=True)
+    assert 'ALT' not in _by_symbol(release)
+    assert 'NM_000050.1: CDS open at its end, which is index 7, not 9' in capsys.readouterr().err
