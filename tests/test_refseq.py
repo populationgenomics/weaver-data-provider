@@ -8,7 +8,21 @@ as a BAM that pysam writes — so no fixture comes from the builder itself. The 
   one base the genome lacks, after genome 610, so the alignment has an insertion.
 - PAR, NM_000040.1 at 51-100 on both X and Y, as a pseudoautosomal transcript is.
 - NONC, NR_000030.1, a non-coding transcript NCBI published no alignment for.
-- MT-TF, a mitochondrial tRNA with no transcript accession; ALT, a gene on an alternate locus only.
+- ALT, NM_000050.1, a coding gene on an alternate locus only: exon 1-10 of NT_187361.1, CDS 3-8.
+- PATCHED, NM_000060.1, placed on CHROM (exons 701-730 and 741-760, CDS 705-750, which reads ATG, ten
+  codons and TAA) and again on the fix patch NW_000001.1, whose bases 1-150 are CHROM's 651-800, so the
+  same exons sit at 51-80 and 91-110.
+  Its second gene feature there carries a suffixed id and the same GeneID, as NCBI writes one, and a
+  transcript NCBI places only on the patch, NR_000061.1 at 121-140. The patch rows come before the
+  chromosome rows.
+- CLIPPED, NM_000070.1: a record whose first five bases, GGGCC, the chromosome lacks; the rest is
+  CHROM 901-930. On CHROM its alignment soft-clips them and its CDS, 901-920, is stated open at the
+  start. On the fix patch NW_000002.1, whose bases are TT + the record + TT, it aligns whole at 3-37
+  with the CDS 3-27 complete.
+- MT-TF, a mitochondrial tRNA with no transcript accession.
+
+Each coding record's CDS is written in a GenBank flat file, as NCBI's rna.gbff states it, in the
+record's own coordinates.
 """
 
 from __future__ import annotations
@@ -17,6 +31,7 @@ import dataclasses
 import gzip
 import pathlib
 import random
+import warnings
 
 import pysam.libcalignedsegment
 import pysam.libcalignmentfile
@@ -33,10 +48,27 @@ from weaver_data_provider.build import genome as genome_build
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
 
-CHROM, X, Y = 'NC_000099.1', 'NC_000023.11', 'NC_000024.10'
+CHROM, X, Y, ALT_LOCUS, PATCH, PATCH2 = (
+    'NC_000099.1',
+    'NC_000023.11',
+    'NC_000024.10',
+    'NT_187361.1',
+    'NW_000001.1',
+    'NW_000002.1',
+)
 _rng = random.Random(99)
-GENOME = {CHROM: ''.join(_rng.choices('ACGT', k=1000)), X: ''.join(_rng.choices('ACGT', k=300))}
+GENOME = {
+    CHROM: ''.join(_rng.choices('ACGT', k=1000)),
+    X: ''.join(_rng.choices('ACGT', k=300)),
+    ALT_LOCUS: 'ACGTACGTAC' + ''.join(_rng.choices('ACGT', k=90)),
+}
+PATCHED_CDS = (
+    'ATG' + 'TCTGAACAACCAGCTACTTGTCATAAAGCT' + 'TAA'
+)  # what NM_000060.1 reads over its CDS, 705-730 and 741-750
+GENOME[CHROM] = GENOME[CHROM][:704] + PATCHED_CDS[:26] + GENOME[CHROM][730:740] + PATCHED_CDS[26:] + GENOME[CHROM][750:]
 GENOME[Y] = GENOME[X]  # the pseudoautosomal region is the same sequence on both
+GENOME[PATCH] = GENOME[CHROM][650:800]  # a fix patch carrying CHROM's 651-800
+GENOME[PATCH2] = 'TT' + 'GGGCC' + GENOME[CHROM][900:930] + 'TT'  # a fix patch supplying CLIPPED's five 5' bases
 INSERTED = 'A'  # the MINUS record's base the genome lacks, in genome orientation
 
 
@@ -55,9 +87,26 @@ TRANSCRIPTS = {
     'NM_000020.1': _revcomp(_MINUS_GENOME_ORDER),
     'NR_000030.1': _g(CHROM, 801, 850),
     'NM_000040.1': _g(X, 51, 100),
-    'NM_000050.1': 'ACGTACGTAC',
+    'NM_000050.1': _g(ALT_LOCUS, 1, 10),
+    'NM_000060.1': _g(CHROM, 701, 730) + _g(CHROM, 741, 760),
+    'NR_000061.1': _g(PATCH, 121, 140),
+    'NM_000070.1': 'GGGCC' + _g(CHROM, 901, 930),
 }
-PROTEINS = {'NP_000010.1': 'MSEQPLUS', 'NP_000020.1': 'MSEQMINUS'}
+PROTEINS = {
+    'NP_000010.1': 'MSEQPLUS',
+    'NP_000020.1': 'MSEQMINUS',
+    'NP_000050.1': 'MA',
+    'NP_000060.1': 'MSEQPATCHKA',
+    'NP_000070.1': 'MSEQCLIP',
+}
+# Each coding record's CDS as its GenBank record states it: 1-based, closed, in the record's coordinates.
+RECORD_CDS = {
+    'NM_000010.2': '5..30',
+    'NM_000020.1': '27..47',
+    'NM_000050.1': '3..8',
+    'NM_000060.1': '5..40',
+    'NM_000070.1': '1..25',
+}
 
 
 def _row(seqid: str, kind: str, start: int, end: int, strand: str, **attrs: str) -> str:
@@ -127,8 +176,35 @@ GFF = [
     _row(Y, 'lnc_RNA', 51, 100, '+', ID='rna-NM_000040.1-2', Parent='gene-PAR-2', transcript_id='NM_000040.1'),
     _row('NC_012920.1', 'gene', 1, 70, '+', ID='gene-MT-TF', Dbxref='GeneID:50', Name='MT-TF'),
     _row('NC_012920.1', 'tRNA', 1, 70, '+', ID='rna-MT-TF', Parent='gene-MT-TF'),
-    _row('NT_187361.1', 'gene', 1, 10, '+', ID='gene-ALT', Dbxref='GeneID:60', Name='ALT'),
-    _row('NT_187361.1', 'mRNA', 1, 10, '+', ID='rna-NM_000050.1', Parent='gene-ALT', transcript_id='NM_000050.1'),
+    _row(ALT_LOCUS, 'gene', 1, 10, '+', ID='gene-ALT', Dbxref='GeneID:60', Name='ALT'),
+    _row(ALT_LOCUS, 'mRNA', 1, 10, '+', ID='rna-NM_000050.1', Parent='gene-ALT', transcript_id='NM_000050.1'),
+    _row(ALT_LOCUS, 'CDS', 3, 8, '+', ID='cds-NP_000050.1', Parent='rna-NM_000050.1', protein_id='NP_000050.1'),
+    _row(PATCH, 'gene', 51, 110, '+', ID='gene-PATCHED-2', Dbxref='GeneID:70', Name='PATCHED'),
+    _row(PATCH, 'mRNA', 51, 110, '+', ID='rna-NM_000060.1-2', Parent='gene-PATCHED-2', transcript_id='NM_000060.1'),
+    _row(PATCH, 'CDS', 55, 80, '+', ID='cds-NP_000060.1-2', Parent='rna-NM_000060.1-2', protein_id='NP_000060.1'),
+    _row(PATCH, 'CDS', 91, 100, '+', ID='cds-NP_000060.1-2', Parent='rna-NM_000060.1-2', protein_id='NP_000060.1'),
+    _row(PATCH, 'lnc_RNA', 121, 140, '+', ID='rna-NR_000061.1', Parent='gene-PATCHED-2', transcript_id='NR_000061.1'),
+    _row(CHROM, 'gene', 701, 760, '+', ID='gene-PATCHED', Dbxref='GeneID:70', Name='PATCHED'),
+    _row(CHROM, 'mRNA', 701, 760, '+', ID='rna-NM_000060.1', Parent='gene-PATCHED', transcript_id='NM_000060.1'),
+    _row(CHROM, 'CDS', 705, 730, '+', ID='cds-NP_000060.1', Parent='rna-NM_000060.1', protein_id='NP_000060.1'),
+    _row(CHROM, 'CDS', 741, 750, '+', ID='cds-NP_000060.1', Parent='rna-NM_000060.1', protein_id='NP_000060.1'),
+    _row(CHROM, 'gene', 901, 930, '+', ID='gene-CLIPPED', Dbxref='GeneID:80', Name='CLIPPED'),
+    _row(CHROM, 'mRNA', 901, 930, '+', ID='rna-NM_000070.1', Parent='gene-CLIPPED', transcript_id='NM_000070.1'),
+    _row(
+        CHROM,
+        'CDS',
+        901,
+        920,
+        '+',
+        ID='cds-NP_000070.1',
+        Parent='rna-NM_000070.1',
+        protein_id='NP_000070.1',
+        partial='true',
+        start_range='.,901',
+    ),
+    _row(PATCH2, 'gene', 3, 37, '+', ID='gene-CLIPPED-2', Dbxref='GeneID:80', Name='CLIPPED'),
+    _row(PATCH2, 'mRNA', 3, 37, '+', ID='rna-NM_000070.1-2', Parent='gene-CLIPPED-2', transcript_id='NM_000070.1'),
+    _row(PATCH2, 'CDS', 3, 27, '+', ID='cds-NP_000070.1-2', Parent='rna-NM_000070.1-2', protein_id='NP_000070.1'),
 ]
 
 
@@ -148,6 +224,12 @@ READS = [
     Read('NM_000020.1', CHROM, 500, '20=80N10=1I20=', True, _MINUS_GENOME_ORDER),
     Read('NM_000040.1', X, 50, '50=', False, TRANSCRIPTS['NM_000040.1']),
     Read('NM_000040.1', Y, 50, '50=', False, TRANSCRIPTS['NM_000040.1']),
+    Read('NM_000050.1', ALT_LOCUS, 0, '10=', False, TRANSCRIPTS['NM_000050.1']),
+    Read('NM_000060.1', CHROM, 700, '30=10N20=', False, TRANSCRIPTS['NM_000060.1']),
+    Read('NM_000060.1', PATCH, 50, '30=10N20=', False, TRANSCRIPTS['NM_000060.1']),
+    Read('NR_000061.1', PATCH, 120, '20=', False, TRANSCRIPTS['NR_000061.1']),
+    Read('NM_000070.1', CHROM, 900, '5S30=', False, TRANSCRIPTS['NM_000070.1']),
+    Read('NM_000070.1', PATCH2, 2, '35=', False, TRANSCRIPTS['NM_000070.1']),
 ]
 HGNC_COLUMNS = ['hgnc_id', 'symbol', 'name', 'alias_symbol', 'prev_symbol', 'entrez_id', 'ensembl_gene_id']
 HGNC = [
@@ -167,8 +249,23 @@ def _fasta(path: pathlib.Path, records: dict[str, str]) -> pathlib.Path:
     return path
 
 
+def _genbank(path: pathlib.Path, records: dict[str, str], cds: dict[str, str]) -> pathlib.Path:
+    """A GenBank flat file of these records, each coding one with its CDS location."""
+    with gzip.open(path, 'wt', encoding='ascii') as fh:
+        for versioned, residues in records.items():
+            accession = versioned.split('.')[0]
+            fh.write(f'LOCUS       {accession}  {len(residues)} bp    mRNA    linear   PRI 01-JAN-2026\n')
+            fh.write(f'DEFINITION  synthetic.\nACCESSION   {accession}\nVERSION     {versioned}\n')
+            fh.write('FEATURES             Location/Qualifiers\n')
+            fh.write(f'     source          1..{len(residues)}\n')
+            if versioned in cds:
+                fh.write(f'     CDS             {cds[versioned]}\n                     /codon_start=1\n')
+            fh.write('ORIGIN\n//\n')
+    return path
+
+
 def _bam(path: pathlib.Path, reads: list[Read]) -> pathlib.Path:
-    order = [CHROM, X, Y]
+    order = list(GENOME)
     header = pysam.libcalignmentfile.AlignmentHeader.from_dict(
         {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': n, 'LN': len(GENOME[n])} for n in order]}
     )
@@ -205,6 +302,7 @@ def _release(
     transcripts: dict[str, str] = TRANSCRIPTS,
     proteins: dict[str, str] = PROTEINS,
     hgnc_columns: list[str] = HGNC_COLUMNS,
+    record_cds: dict[str, str] = RECORD_CDS,
 ) -> refseq.Release:
     """The synthetic release written under `tmp_path`; each keyword replaces one input."""
     annotation = tmp_path / 'genomic.gff.gz'
@@ -219,11 +317,55 @@ def _release(
         alignments=(_bam(tmp_path / 'alns.bam', reads),),
         hgnc=_tsv(tmp_path / 'hgnc.txt', hgnc_columns, [r[: len(hgnc_columns)] for r in HGNC], gzipped=False),
         mane=_tsv(tmp_path / 'mane.txt.gz', ['RefSeq_nuc', 'Ensembl_nuc', 'MANE_status'], MANE, gzipped=True),
+        records=_genbank(tmp_path / 'rna.gbff.gz', transcripts, record_cds),
     )
 
 
 def _by_symbol(release: refseq.Release) -> dict[str, bundle_pb2.GeneBundle]:
     return {b.gene.symbol: b for b in refseq.bundles(release)}
+
+
+def _quietly(release: refseq.Release) -> dict[str, bundle_pb2.GeneBundle]:
+    """The bundles by symbol, for a test about their contents rather than the warnings their build raises."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', build.BuildWarning)
+        return _by_symbol(release)
+
+
+def _transcript(bundle: bundle_pb2.GeneBundle, accession: str) -> bundle_pb2.Transcript:
+    (found,) = [t for t in bundle.transcripts if t.accession == accession]
+    return found
+
+
+def _rows(gff: list[str], **attrs: str) -> list[str]:
+    """The rows of a GFF carrying every one of these attribute values."""
+    return [line for line in gff if all(f'{k}={v}' in line.split('\t')[-1].split(';') for k, v in attrs.items())]
+
+
+def _replacing(gff: list[str], rows: list[str], with_rows: list[str]) -> list[str]:
+    """`gff` with `rows` taken out and `with_rows` put where the first of them was."""
+    first = min(gff.index(row) for row in rows)
+    before = [line for line in gff[:first] if line not in rows]
+    after = [line for line in gff[first:] if line not in rows]
+    return [*before, *with_rows, *after]
+
+
+def _alt_open(*, start: bool = False, end: bool = False) -> tuple[list[str], dict[str, str]]:
+    """ALT's annotation and records with its CDS run off the record's start or end, as NCBI publishes such a model.
+
+    The annotation's CDS row is open at the same end, so no placement states a bound there to check.
+    """
+    first, last = (1 if start else 3), (10 if end else 8)
+    attrs = {'partial': 'true'} if start or end else {}
+    if start:
+        attrs['start_range'] = f'.,{first}'
+    if end:
+        attrs['end_range'] = f'{last},.'
+    (row,) = _rows(GFF, ID='cds-NP_000050.1')
+    opened = _row(ALT_LOCUS, 'CDS', first, last, '+', ID='cds-NP_000050.1', Parent='rna-NM_000050.1',
+                  protein_id='NP_000050.1', **attrs)  # fmt: skip
+    location = f'{"<" if start else ""}{first}..{">" if end else ""}{last}'
+    return _replacing(GFF, [row], [opened]), {**RECORD_CDS, 'NM_000050.1': location}
 
 
 def _exons(alignment: bundle_pb2.Alignment) -> list[tuple[int, int, int, int, str]]:
@@ -285,9 +427,211 @@ def test_a_noncoding_transcript_without_an_alignment_is_bundled_unplaced(tmp_pat
     assert not transcript.HasField('cds')
 
 
-def test_only_transcripts_with_an_accession_on_a_chromosome_are_bundled(tmp_path: pathlib.Path) -> None:
-    # MT-TF's tRNA names no accession; ALT is placed on an alternate locus only
-    assert set(_by_symbol(_release(tmp_path))) == {'MINUS', 'NONC', 'PAR', 'PLUS'}
+def test_a_transcript_on_an_alternate_locus_only_is_bundled_with_its_placement_there(tmp_path: pathlib.Path) -> None:
+    (transcript,) = _by_symbol(_release(tmp_path))['ALT'].transcripts
+    (alignment,) = transcript.alignments
+    assert alignment.chromosome == ALT_LOCUS
+    assert _exons(alignment) == [(0, 10, 0, 9, '10=')]
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (2, 7)
+
+
+def test_a_gene_placed_on_a_chromosome_and_a_patch_is_one_bundle(tmp_path: pathlib.Path) -> None:
+    bundles = [b for b in refseq.bundles(_release(tmp_path)) if b.gene.symbol == 'PATCHED']
+    (bundle,) = bundles
+    assert sorted(f'{t.accession}.{t.version}' for t in bundle.transcripts) == ['NM_000060.1', 'NR_000061.1']
+
+
+def test_a_transcript_placed_only_on_a_patch_keeps_that_placement(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_by_symbol(_release(tmp_path))['PATCHED'], 'NR_000061')
+    assert [(a.chromosome, _exons(a)) for a in transcript.alignments] == [(PATCH, [(0, 20, 120, 139, '20=')])]
+
+
+def test_placements_are_kept_chromosome_first_whatever_order_the_annotation_lists_them(
+    tmp_path: pathlib.Path,
+) -> None:
+    # the fixture lists PATCHED's patch rows before its chromosome rows
+    transcript = _transcript(_by_symbol(_release(tmp_path))['PATCHED'], 'NM_000060')
+    assert [a.chromosome for a in transcript.alignments] == [CHROM, PATCH]
+
+
+def test_a_patch_placement_takes_its_exons_from_the_alignment_on_the_patch(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_by_symbol(_release(tmp_path))['PATCHED'], 'NM_000060')
+    (on_patch,) = [a for a in transcript.alignments if a.chromosome == PATCH]
+    assert _exons(on_patch) == [(0, 30, 50, 79, '30='), (30, 50, 90, 109, '20=')]
+
+
+def test_a_cds_both_placements_agree_with_raises_no_warning(tmp_path: pathlib.Path) -> None:
+    # genome 705 is exon 1's fifth base on CHROM, as 55 is on the patch; both project to the record's 4..39
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', build.BuildWarning)
+        transcript = _transcript(_by_symbol(_release(tmp_path))['PATCHED'], 'NM_000060')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (4, 39)
+
+
+def _patch_cds_end(end: int) -> list[str]:
+    """The fixture with PATCHED's last CDS row on the patch ending at `end` instead of 100."""
+    (row,) = [r for r in _rows(GFF, Parent='rna-NM_000060.1-2') if '\tCDS\t91\t' in r]
+    moved = _row(
+        PATCH, 'CDS', 91, end, '+', ID='cds-NP_000060.1-2', Parent='rna-NM_000060.1-2', protein_id='NP_000060.1'
+    )
+    return _replacing(GFF, [row], [moved])
+
+
+@pytest.mark.parametrize('patch_end', [99, 101, 97], ids=['one base short', 'one base long', 'one codon short'])
+def test_where_a_placement_projects_the_cds_elsewhere_the_records_is_kept(
+    tmp_path: pathlib.Path, patch_end: int
+) -> None:
+    transcript = _transcript(_quietly(_release(tmp_path, gff=_patch_cds_end(patch_end)))['PATCHED'], 'NM_000060')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (4, 39)
+
+
+def test_a_placement_projecting_the_cds_elsewhere_warns_naming_it(tmp_path: pathlib.Path) -> None:
+    expected = (
+        rf'NM_000060\.1: CDS 4\.\.39 taken from its record; the annotation projects 4\.\.38 through .* on {PATCH}'
+    )
+    with pytest.warns(build.BuildWarning, match=expected):
+        _by_symbol(_release(tmp_path, gff=_patch_cds_end(99)))
+
+
+def test_a_chromosome_placement_projecting_the_cds_elsewhere_warns_too(tmp_path: pathlib.Path) -> None:
+    # the chromosome states the CDS one base short, 741-749; the patch agrees with the record
+    (row,) = [r for r in _rows(GFF, Parent='rna-NM_000060.1') if '\tCDS\t741\t' in r]
+    short = _row(CHROM, 'CDS', 741, 749, '+', ID='cds-NP_000060.1', Parent='rna-NM_000060.1', protein_id='NP_000060.1')
+    with pytest.warns(build.BuildWarning, match=rf'NM_000060\.1: .* through the alignment on {CHROM}'):
+        _by_symbol(_release(tmp_path, gff=_replacing(GFF, [row], [short])))
+
+
+def test_a_placement_projecting_the_cds_elsewhere_keeps_its_alignment(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_quietly(_release(tmp_path, gff=_patch_cds_end(99)))['PATCHED'], 'NM_000060')
+    assert [a.chromosome for a in transcript.alignments] == [CHROM, PATCH]
+
+
+def test_the_records_cds_stands_where_no_aligned_placement_states_it_whole(tmp_path: pathlib.Path) -> None:
+    # CLIPPED's whole CDS is stated on the patch only; without the patch alignment nothing can check it
+    reads = [r for r in READS if not (r.name == 'NM_000070.1' and r.chrom == PATCH2)]
+    transcript = _transcript(_by_symbol(_release(tmp_path, reads=reads))['CLIPPED'], 'NM_000070')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (0, 24)
+    assert not transcript.cds.start_open
+    assert not transcript.cds.end_open
+
+
+def test_a_cds_starting_in_bases_a_placement_lacks_is_the_records(tmp_path: pathlib.Path) -> None:
+    # CLIPPED's CDS begins in the five bases the chromosome lacks: indices 0..24, the record's
+    transcript = _transcript(_by_symbol(_release(tmp_path))['CLIPPED'], 'NM_000070')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (0, 24)
+
+
+def test_a_placement_open_at_its_cds_start_is_not_checked_against_the_record(tmp_path: pathlib.Path) -> None:
+    # the chromosome's open row would project to index 5, the first base it has; it states no start to check
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', build.BuildWarning)
+        _by_symbol(_release(tmp_path))
+
+
+def test_a_clipped_placement_is_kept_with_the_clipped_bases_as_transcript_only(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_by_symbol(_release(tmp_path))['CLIPPED'], 'NM_000070')
+    assert [(a.chromosome, _exons(a)) for a in transcript.alignments] == [
+        (CHROM, [(0, 35, 900, 929, '5I30=')]),
+        (PATCH2, [(0, 35, 2, 36, '35=')]),
+    ]
+
+
+def _broken_plus(end: int) -> list[str]:
+    """PLUS's CDS rows marked partial either side of an internal break, outer ends closed, the last ending at `end`."""
+    rows = [r for r in _rows(GFF, Parent='rna-NM_000010.2') if '\tCDS\t' in r]
+    broken = [
+        _row(CHROM, 'CDS', 105, 120, '+', ID='cds-NP_000010.1', Parent='rna-NM_000010.2', protein_id='NP_000010.1',
+             partial='true', end_range='120,.'),
+        _row(CHROM, 'CDS', 201, end, '+', ID='cds-NP_000010.1', Parent='rna-NM_000010.2', protein_id='NP_000010.1',
+             partial='true', start_range='.,201'),
+    ]  # fmt: skip
+    return _replacing(GFF, rows, broken)
+
+
+def test_a_cds_broken_internally_but_closed_at_both_ends_is_checked(tmp_path: pathlib.Path) -> None:
+    # NCBI marks both rows either side of a frameshift partial; the outer ends stay closed, so the bounds are stated
+    with pytest.warns(
+        build.BuildWarning, match=r'NM_000010\.2: CDS 4\.\.29 taken from its record; the annotation projects 4\.\.28'
+    ):
+        _by_symbol(_release(tmp_path, gff=_broken_plus(209)))
+
+
+def test_a_minus_strand_cds_open_at_its_high_genome_end_is_not_checked(tmp_path: pathlib.Path) -> None:
+    # MINUS reads 5' to 3' downward on the genome, so an open start is `end_range` on its highest row, 601-605;
+    # the row here ends at 603, which a check would find two bases short
+    (row,) = [r for r in _rows(GFF, Parent='rna-NM_000020.1') if '\tCDS\t601\t' in r]
+    open_5 = _row(CHROM, 'CDS', 601, 603, '-', ID='cds-NP_000020.1', Parent='rna-NM_000020.1',
+                  protein_id='NP_000020.1', partial='true', end_range='603,.')  # fmt: skip
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', build.BuildWarning)
+        (transcript,) = _by_symbol(_release(tmp_path, gff=_replacing(GFF, [row], [open_5])))['MINUS'].transcripts
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (26, 46)
+
+
+@pytest.mark.parametrize(
+    ('start', 'end', 'bounds'),
+    [(True, False, (0, 7)), (False, True, (2, 9)), (True, True, (0, 9))],
+    ids=['open start', 'open end', 'open both'],
+)
+def test_a_record_cds_open_at_an_end_keeps_its_bounds_and_says_which_end(
+    tmp_path: pathlib.Path, start: bool, end: bool, bounds: tuple[int, int]
+) -> None:
+    gff, record_cds = _alt_open(start=start, end=end)
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
+    cds = transcript.cds
+    assert (cds.start_index, cds.end_index_inclusive, cds.start_open, cds.end_open) == (*bounds, start, end)
+
+
+@pytest.mark.parametrize(
+    ('location', 'error'),
+    [('<3..8', r'open at its start, which is index 2, not 0'), ('3..>8', r'open at its end, which is index 7, not 9')],
+    ids=['open start', 'open end'],
+)
+def test_an_open_cds_end_short_of_the_records_edge_fails_the_build(
+    tmp_path: pathlib.Path, location: str, error: str
+) -> None:
+    # bases beyond an open end would be coding by the record yet numbered from nothing
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location})
+    with pytest.raises(build.BuildError, match=rf'NM_000050\.1: CDS {error}'):
+        list(refseq.bundles(release))
+
+
+def test_a_transcript_with_an_open_cds_keeps_its_protein(tmp_path: pathlib.Path) -> None:
+    gff, record_cds = _alt_open(start=True)
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
+    assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
+
+
+def test_the_report_counts_the_records_that_leave_a_cds_end_open(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gff, record_cds = _alt_open(start=True)
+    list(refseq.bundles(_release(tmp_path, gff=gff, record_cds=record_cds)))
+    assert "coding transcripts whose record leaves a CDS end open: 1 (5' 1);" in capsys.readouterr().err
+
+
+def test_a_transcript_on_a_scaffold_and_a_patch_only_is_kept_scaffold_first(tmp_path: pathlib.Path) -> None:
+    # ALT's transcript placed again on PATCH, listed first, at 141-150
+    patch_copy = [
+        _row(PATCH, 'gene', 141, 150, '+', ID='gene-ALT-2', Dbxref='GeneID:60', Name='ALT'),
+        _row(PATCH, 'mRNA', 141, 150, '+', ID='rna-NM_000050.1-2', Parent='gene-ALT-2', transcript_id='NM_000050.1'),
+        _row(PATCH, 'CDS', 143, 148, '+', ID='cds-NP_000050.1-2', Parent='rna-NM_000050.1-2', protein_id='NP_000050.1'),
+    ]
+    read = Read('NM_000050.1', PATCH, 140, '10=', False, TRANSCRIPTS['NM_000050.1'])
+    release = _release(tmp_path, gff=[*patch_copy, *GFF], reads=[*READS, read])
+    (transcript,) = _by_symbol(release)['ALT'].transcripts
+    assert [a.chromosome for a in transcript.alignments] == [ALT_LOCUS, PATCH]
+
+
+def test_a_transcript_placed_twice_on_one_sequence_fails_the_build(tmp_path: pathlib.Path) -> None:
+    again = _row(CHROM, 'mRNA', 801, 850, '+', ID='rna-NM_000010.2-2', Parent='gene-PLUS', transcript_id='NM_000010.2')
+    with pytest.raises(build.BuildError, match=rf'NM_000010\.2: placed twice on {CHROM}'):
+        list(refseq.bundles(_release(tmp_path, gff=[*GFF, again])))
+
+
+def test_a_feature_with_no_transcript_accession_is_not_bundled(tmp_path: pathlib.Path) -> None:
+    # MT-TF's tRNA names no accession
+    assert 'MT-TF' not in _by_symbol(_release(tmp_path))
 
 
 def test_bundles_come_in_symbol_order(tmp_path: pathlib.Path) -> None:
@@ -310,6 +654,12 @@ def test_aliases_gather_hgnc_and_the_annotation(tmp_path: pathlib.Path) -> None:
     gene = _by_symbol(_release(tmp_path))['PLUS'].gene
     assert sorted(gene.alias_symbols) == ['PL1', 'PLS']
     assert list(gene.previous_symbols) == ['OLDPLUS']
+
+
+def test_an_annotation_synonym_hgnc_lists_as_a_previous_symbol_is_not_an_alias_too(tmp_path: pathlib.Path) -> None:
+    gff = [line.replace('gene_synonym=PLS', 'gene_synonym=PLS,OLDPLUS') for line in GFF]
+    gene = _by_symbol(_release(tmp_path, gff=gff))['PLUS'].gene
+    assert 'OLDPLUS' not in gene.alias_symbols
 
 
 def test_mane_select_is_tagged_with_its_ensembl_partner(tmp_path: pathlib.Path) -> None:
@@ -339,17 +689,26 @@ def test_an_alignment_outside_the_annotation_span_fails_the_build(tmp_path: path
         list(refseq.bundles(release))
 
 
-def test_a_cds_bound_on_a_genome_only_base_fails_the_build(tmp_path: pathlib.Path) -> None:
-    # the record lacks genome 105, the CDS's first base, so the alignment deletes it
+def _deleting_plus(tmp_path: pathlib.Path) -> refseq.Release:
+    """PLUS with its record lacking genome 105, where the annotation starts the CDS, so the alignment deletes it."""
     record = _g(CHROM, 101, 104) + _g(CHROM, 106, 120) + _g(CHROM, 201, 230)
     deleting = Read('NM_000010.2', CHROM, 100, '4=1D15=80N30=', False, record)
-    release = _release(
+    return _release(
         tmp_path,
         reads=[deleting if r.name == 'NM_000010.2' else r for r in READS],
         transcripts={**TRANSCRIPTS, 'NM_000010.2': record},
+        record_cds={**RECORD_CDS, 'NM_000010.2': '5..29'},
     )
-    with pytest.raises(build.BuildError, match='genome position 104 is a genome-only base'):
-        list(refseq.bundles(release))
+
+
+def test_a_cds_the_annotation_bounds_on_a_genome_only_base_is_the_records(tmp_path: pathlib.Path) -> None:
+    (transcript,) = _quietly(_deleting_plus(tmp_path))['PLUS'].transcripts
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (4, 28)
+
+
+def test_an_annotation_cds_that_does_not_project_warns(tmp_path: pathlib.Path) -> None:
+    with pytest.warns(build.BuildWarning, match='does not project: .*genome position 104 is a genome-only base'):
+        _by_symbol(_deleting_plus(tmp_path))
 
 
 def test_a_primary_alignment_with_no_cigar_fails_the_build(tmp_path: pathlib.Path) -> None:
@@ -384,7 +743,8 @@ def test_the_built_commands_feed_weaver(tmp_path: pathlib.Path, capsys: pytest.C
         'refseq', '--assembly', 'GRCh38', '--release', 'RS_TEST',
         '--annotation', str(release.annotation), '--transcripts', str(release.transcripts),
         '--proteins', str(release.proteins), '--alignments', str(release.alignments[0]),
-        '--hgnc', str(release.hgnc), '--mane', str(release.mane), '--shards', str(tmp_path / 'shards'),
+        '--hgnc', str(release.hgnc), '--mane', str(release.mane), '--records', str(release.records),
+        '--shards', str(tmp_path / 'shards'),
     ])  # fmt: skip
     shard = capsys.readouterr().out.strip()
     cli.main(['index', '--assembly', 'GRCh38', '--out', str(tmp_path / 'store'), shard])
@@ -426,9 +786,12 @@ def test_a_truncated_feature_line_fails_the_build(tmp_path: pathlib.Path) -> Non
         list(refseq.bundles(_release(tmp_path, gff=truncated)))
 
 
-def test_a_pseudoautosomal_transcript_is_modelled_on_the_chromosome_asked_for(tmp_path: pathlib.Path) -> None:
+def _provider(
+    tmp_path: pathlib.Path, *, gff: list[str] = GFF, record_cds: dict[str, str] = RECORD_CDS
+) -> provider_mod.BundleProvider:
+    """The synthetic release built, indexed and cut, and opened as weaver's provider."""
     shard = store_build.write_shard(
-        refseq.bundles(_release(tmp_path)),
+        refseq.bundles(_release(tmp_path, gff=gff, record_cds=record_cds)),
         tmp_path / 'shards',
         release='RS_TEST',
         inputs=[('annotation', tmp_path / 'genomic.gff.gz')],
@@ -437,8 +800,275 @@ def test_a_pseudoautosomal_transcript_is_modelled_on_the_chromosome_asked_for(tm
     genome_build.build_genome(
         _fasta(tmp_path / 'genome.fna.gz', GENOME), tmp_path / 'genome', assembly=bundle_pb2.ASSEMBLY_GRCH38
     )
-    provider = provider_mod.BundleProvider(
+    return provider_mod.BundleProvider(
         store_mod.BundleStore(str(tmp_path / 'store')), genome_mod.Genome(str(tmp_path / 'genome'))
     )
+
+
+def test_a_pseudoautosomal_transcript_is_modelled_on_the_chromosome_asked_for(tmp_path: pathlib.Path) -> None:
+    provider = _provider(tmp_path)
     assert provider.get_transcript('NM_000040.1', Y)['reference_accession'] == Y
     assert provider.get_transcript('NM_000040.1', X)['reference_accession'] == X
+
+
+def test_a_transcript_also_on_a_patch_is_modelled_on_the_chromosome_when_none_is_named(
+    tmp_path: pathlib.Path,
+) -> None:
+    assert _provider(tmp_path).get_transcript('NM_000060.1', None)['reference_accession'] == CHROM
+
+
+def test_a_patch_a_transcript_is_placed_on_is_modelled_when_named(tmp_path: pathlib.Path) -> None:
+    assert _provider(tmp_path).get_transcript('NM_000060.1', PATCH)['reference_accession'] == PATCH
+
+
+def test_a_transcript_on_an_alternate_locus_only_projects_to_that_locus(tmp_path: pathlib.Path) -> None:
+    # ALT's c.1 is NT_187361.1's third base, a G
+    variant = weaver.parse('NM_000050.1:c.1G>C')
+    assert weaver.VariantMapper(_provider(tmp_path)).c_to_g(variant, None).format() == f'{ALT_LOCUS}:g.3G>C'
+
+
+def test_a_region_of_an_alternate_locus_finds_the_transcripts_placed_on_it(tmp_path: pathlib.Path) -> None:
+    assert _provider(tmp_path).get_transcripts_for_region(ALT_LOCUS, 2, 2) == ['NM_000050.1']
+
+
+def test_a_sequence_a_transcript_is_not_placed_on_is_refused_by_name(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(weaver.DataProviderError, match=f'no alignment on {CHROM}'):
+        _provider(tmp_path).get_transcript('NM_000050.1', CHROM)
+
+
+def _open_alt(tmp_path: pathlib.Path, *, start: bool = False, end: bool = False) -> provider_mod.BundleProvider:
+    """The provider over a release whose ALT CDS runs off its record at the ends named."""
+    gff, record_cds = _alt_open(start=start, end=end)
+    return _provider(tmp_path, gff=gff, record_cds=record_cds)
+
+
+@pytest.mark.parametrize(
+    ('start', 'end', 'bounds'),
+    [(False, False, (2, 7)), (True, False, (0, 7)), (False, True, (2, 9))],
+    ids=['closed', 'open start', 'open end'],
+)
+def test_the_model_says_which_cds_ends_are_open(
+    tmp_path: pathlib.Path, start: bool, end: bool, bounds: tuple[int, int]
+) -> None:
+    model = _open_alt(tmp_path, start=start, end=end).get_transcript('NM_000050.1', None)
+    assert (model['cds_start_index'], model['cds_end_index']) == bounds
+    assert (model.get('cds_start_open'), model.get('cds_end_open')) == (start, end)
+
+
+def test_a_noncoding_model_has_no_open_cds_end(tmp_path: pathlib.Path) -> None:
+    model = _provider(tmp_path).get_transcript('NR_000061.1', None)
+    assert (model['cds_start_index'], model.get('cds_start_open'), model.get('cds_end_open')) == (None, False, False)
+
+
+@pytest.mark.parametrize(
+    ('open_end', 'variant', 'end'),
+    [({'start': True}, 'NM_000050.1:c.1A>C', "5'"), ({'end': True}, 'NM_000050.1:c.*1A>C', "3'")],
+    ids=['c. from an open start', 'c.* from an open end'],
+)
+def test_a_position_numbered_from_an_open_cds_end_is_refused(
+    tmp_path: pathlib.Path, open_end: dict[str, bool], variant: str, end: str
+) -> None:
+    mapper = weaver.VariantMapper(_open_alt(tmp_path, **open_end))
+    with pytest.raises(weaver.ValidationError, match=f'open at the {end} end'):
+        mapper.c_to_g(weaver.parse(variant), None)
+
+
+@pytest.mark.parametrize(
+    ('open_end', 'variant', 'projected'),
+    [({'end': True}, 'NM_000050.1:c.1G>C', 'g.3G>C'), ({'start': True}, 'NM_000050.1:c.*1A>C', 'g.9A>C')],
+    ids=['c. on an open end', 'c.* on an open start'],
+)
+def test_a_position_numbered_from_the_closed_end_of_an_open_cds_projects(
+    tmp_path: pathlib.Path, open_end: dict[str, bool], variant: str, projected: str
+) -> None:
+    mapped = weaver.VariantMapper(_open_alt(tmp_path, **open_end)).c_to_g(weaver.parse(variant), None)
+    assert mapped.format() == f'{ALT_LOCUS}:{projected}'
+
+
+# ---- the GenBank records -------------------------------------------------------------------------------
+
+
+def test_a_transcript_coding_by_the_annotation_but_not_its_record_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path, record_cds={k: v for k, v in RECORD_CDS.items() if k != 'NM_000010.2'})
+    with pytest.raises(build.BuildError, match=r'state none in their record.*NM_000010\.2'):
+        list(refseq.bundles(release))
+
+
+def test_a_transcript_coding_only_by_its_record_must_still_be_aligned(tmp_path: pathlib.Path) -> None:
+    # NONC has no alignment; a CDS in its record makes it coding, and a coding transcript needs a placement
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NR_000030.1': '5..40'})
+    with pytest.raises(build.BuildError, match=r'no alignment.*NR_000030\.1'):
+        list(refseq.bundles(release))
+
+
+def test_a_record_cds_where_the_annotation_gives_none_warns(tmp_path: pathlib.Path) -> None:
+    # PAR is aligned and the annotation calls it non-coding, but its record states a CDS
+    with pytest.warns(
+        build.BuildWarning, match=r'NM_000040\.1: CDS 4\.\.39 taken from its record; the annotation gives it no CDS'
+    ):
+        _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000040.1': '5..40'}))
+
+
+def test_a_record_cds_outside_its_sequence_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..300'})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: CDS 4\.\.299 outside its 50-base sequence'):
+        list(refseq.bundles(release))
+
+
+def test_a_closed_cds_read_from_other_than_its_first_base_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # a whole CDS starts with its start codon, so it reads from its first base
+    shifted = '5..30\n                     /codon_start=2'
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': shifted})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: a CDS with a closed start but /codon_start=2'):
+        list(refseq.bundles(release))
+
+
+def test_an_open_cds_may_read_from_its_second_base(tmp_path: pathlib.Path) -> None:
+    gff, record_cds = _alt_open(start=True)
+    record_cds['NM_000050.1'] += '\n                     /codon_start=2'
+    (transcript,) = _by_symbol(_release(tmp_path, gff=gff, record_cds=record_cds))['ALT'].transcripts
+    assert transcript.cds.start_open
+
+
+def test_a_frameshifted_cds_is_taken_by_its_outer_bounds(tmp_path: pathlib.Path) -> None:
+    # a programmed frameshift is written as a join that skips a base; c. numbering needs the outer bounds
+    cds = _quietly(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': 'join(5..17,19..30)'}))['PLUS']
+    assert (cds.transcripts[0].cds.start_index, cds.transcripts[0].cds.end_index_inclusive) == (4, 29)
+
+
+def test_a_frameshifted_cds_wrapped_onto_a_second_line_is_read_whole(tmp_path: pathlib.Path) -> None:
+    wrapped = 'join(5..17,\n                     19..30)'
+    transcript = _quietly(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': wrapped}))['PLUS'].transcripts[0]
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (4, 29)
+
+
+def test_a_record_stating_two_cds_features_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..30\n     CDS             7..30'})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2 states more than one CDS'):
+        list(refseq.bundles(release))
+
+
+def test_a_cds_in_a_record_with_no_version_line_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # otherwise the CDS would be credited to the record before it
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    release.records.write_bytes(gzip.compress(text.replace('VERSION     NM_000020.1\n', '', 1).encode('ascii')))
+    with pytest.raises(build.BuildError, match='a CDS in a record with no VERSION line'):
+        list(refseq.bundles(release))
+
+
+@pytest.mark.parametrize(
+    'location',
+    [
+        'complement(5..30)',  # a minus-strand CDS on a transcript record
+        'order(5..17,19..30)',  # not one contiguous reading
+        'join(NM_000001.2:5..17,19..30)',  # a range on another record, whose digits are no bound of this one
+        '5^6',  # a site between two bases
+        '5',  # a single base
+        '30..5',  # backwards
+        'join(19..30,5..17)',  # a join whose ranges run backwards
+        'join(5..>17,19..30)',  # open at an inner bound
+    ],
+)
+def test_a_cds_location_of_another_shape_fails_the_build(tmp_path: pathlib.Path, location: str) -> None:
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': location})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: CDS location'):
+        list(refseq.bundles(release))
+
+
+def test_a_file_ending_inside_a_cds_location_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    cut = text.index('     CDS             5..30')
+    release.records.write_bytes(gzip.compress((text[:cut] + '     CDS             join(5..17,\n').encode('ascii')))
+    with pytest.raises(build.BuildError, match=r'ends inside the CDS location of NM_000010\.2'):
+        list(refseq.bundles(release))
+
+
+def test_a_version_line_with_no_accession_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    blanked = text.replace('VERSION     NM_000020.1\n', 'VERSION\n')
+    release.records.write_bytes(gzip.compress(blanked.encode('ascii')))
+    with pytest.raises(build.BuildError, match='a VERSION line with no accession'):
+        list(refseq.bundles(release))
+
+
+def test_the_shard_names_the_records_it_was_cut_from(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    shard = store_build.write_shard(
+        refseq.bundles(release), tmp_path / 'shards', release='RS_TEST', inputs=release.inputs()
+    )
+    assert 'records' in {i.role for i in store_build.shard_record(shard).inputs}
+
+
+# ---- the command's warning report ------------------------------------------------------------------------
+
+
+def _refseq_command(release: refseq.Release, shards: pathlib.Path) -> list[str]:
+    return [
+        'refseq', '--assembly', 'GRCh38', '--release', 'RS_TEST',
+        '--annotation', str(release.annotation), '--transcripts', str(release.transcripts),
+        '--proteins', str(release.proteins), '--alignments', str(release.alignments[0]),
+        '--hgnc', str(release.hgnc), '--mane', str(release.mane), '--records', str(release.records),
+        '--shards', str(shards),
+    ]  # fmt: skip
+
+
+def test_the_command_reports_each_build_warning_on_a_line(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # the command reports build warnings whatever filters the caller runs it under
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99)), tmp_path / 'shards'))
+    report = capsys.readouterr().err.splitlines()
+    assert report[-2].startswith('warning: NM_000060.1: CDS 4..39 taken from its record; the annotation projects 4..38')
+    assert report[-1] == '1 build warning'
+
+
+def test_a_crashed_build_still_reports_its_warnings(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stands in for a defect or an I/O error during the build, which is not a BuildError
+    write_shard = store_build.write_shard
+
+    def crash(*args: object, **kwargs: object) -> pathlib.Path:
+        write_shard(*args, **kwargs)  # type: ignore[arg-type]
+        raise OSError('disk full')
+
+    monkeypatch.setattr(store_build, 'write_shard', crash)
+    with pytest.raises(OSError, match='disk full'):
+        cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99)), tmp_path / 'shards'))
+    report = capsys.readouterr().err.splitlines()
+    assert report[-2].startswith('warning: NM_000060.1: CDS 4..39 taken from its record')
+    assert report[-1] == '1 build warning'
+
+
+def test_a_failed_build_reports_its_warnings_before_the_failure(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # genes are bundled in the annotation's order: PATCHED's warning is raised before CLIPPED's missing protein
+    proteins = {k: v for k, v in PROTEINS.items() if k != 'NP_000070.1'}
+    with pytest.raises(SystemExit):
+        cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99), proteins=proteins), tmp_path / 'shards'))
+    report = capsys.readouterr().err.splitlines()
+    assert report[-3].startswith('warning: NM_000060.1: CDS 4..39 taken from its record')
+    assert report[-2] == '1 build warning'
+    assert report[-1] == 'FAILED: NM_000070.1: its protein NP_000070.1 is not in the protein set'
+
+
+def test_a_warning_of_another_kind_is_shown_and_the_command_finishes(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stands in for a library warning raised during the build; showing it while recording hung the command
+    write_shard = store_build.write_shard
+
+    def warning_first(*args: object, **kwargs: object) -> pathlib.Path:
+        warnings.warn('a library warning', RuntimeWarning, stacklevel=1)
+        return write_shard(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_build, 'write_shard', warning_first)
+    with pytest.warns(RuntimeWarning, match='a library warning'):  # re-shown once the build is over
+        cli.main(_refseq_command(_release(tmp_path), tmp_path / 'shards'))
+    assert capsys.readouterr().out.strip().endswith('.bagz')  # the command finished and printed its shard

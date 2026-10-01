@@ -16,8 +16,8 @@ from weaver_data_provider import store as store_mod
 from weaver_data_provider.v1 import bundle_pb2
 
 _GENOMIC = ('NC_', 'NT_', 'NW_')
-_TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_')
-_PROTEIN = ('NP_', 'XP_', 'YP_')
+_TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
+_PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
@@ -62,6 +62,14 @@ class BundleProvider:
         raise weaver.DataProviderError(f'{accession}: not in the reference data')
 
     def get_transcript(self, transcript_ac: str, reference_ac: str | None) -> weaver.TranscriptData:
+        """The model on `reference_ac`, or on the first sequence it is placed on: a chromosome where there is one.
+
+        A CDS end the publisher marks open is passed on as open, and weaver numbers no position from it.
+
+        Raises:
+            weaver.DataProviderError: If the transcript, or its placement on `reference_ac`, is not in the
+                reference data.
+        """
         bundle, transcript = self._transcript(transcript_ac)
         alignments = [a for a in transcript.alignments if reference_ac is None or a.chromosome == reference_ac]
         if not alignments:
@@ -75,6 +83,8 @@ class BundleProvider:
             'gene': bundle.gene.symbol,
             'cds_start_index': transcript.cds.start_index if coding else None,
             'cds_end_index': transcript.cds.end_index_inclusive if coding else None,
+            'cds_start_open': transcript.cds.start_open,
+            'cds_end_open': transcript.cds.end_open,
             'strand': strand,
             'reference_accession': alignment.chromosome,
             'exons': [

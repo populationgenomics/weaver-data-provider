@@ -47,6 +47,7 @@ class AlignmentSource(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ALIGNMENT_SOURCE_NCBI_BAM: _ClassVar[AlignmentSource]
     ALIGNMENT_SOURCE_MANE_PARTNER: _ClassVar[AlignmentSource]
     ALIGNMENT_SOURCE_COMPUTED: _ClassVar[AlignmentSource]
+    ALIGNMENT_SOURCE_ANNOTATION: _ClassVar[AlignmentSource]
 
 class Alphabet(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -75,6 +76,7 @@ ALIGNMENT_SOURCE_UNSPECIFIED: AlignmentSource
 ALIGNMENT_SOURCE_NCBI_BAM: AlignmentSource
 ALIGNMENT_SOURCE_MANE_PARTNER: AlignmentSource
 ALIGNMENT_SOURCE_COMPUTED: AlignmentSource
+ALIGNMENT_SOURCE_ANNOTATION: AlignmentSource
 ALPHABET_UNSPECIFIED: Alphabet
 ALPHABET_NUCLEOTIDE: Alphabet
 ALPHABET_PROTEIN: Alphabet
@@ -138,12 +140,16 @@ class Transcript(_message.Message):
     def __init__(self, accession: _Optional[str] = ..., version: _Optional[int] = ..., publisher: _Optional[_Union[Publisher, str]] = ..., status: _Optional[_Union[TranscriptStatus, str]] = ..., biotype: _Optional[str] = ..., tags: _Optional[_Iterable[_Union[Tag, str]]] = ..., sequence_digest: _Optional[str] = ..., cds: _Optional[_Union[Cds, _Mapping]] = ..., protein_accession: _Optional[str] = ..., protein_version: _Optional[int] = ..., mane_partner: _Optional[str] = ..., alignments: _Optional[_Iterable[_Union[Alignment, _Mapping]]] = ...) -> None: ...
 
 class Cds(_message.Message):
-    __slots__ = ("start_index", "end_index_inclusive")
+    __slots__ = ("start_index", "end_index_inclusive", "start_open", "end_open")
     START_INDEX_FIELD_NUMBER: _ClassVar[int]
     END_INDEX_INCLUSIVE_FIELD_NUMBER: _ClassVar[int]
+    START_OPEN_FIELD_NUMBER: _ClassVar[int]
+    END_OPEN_FIELD_NUMBER: _ClassVar[int]
     start_index: int
     end_index_inclusive: int
-    def __init__(self, start_index: _Optional[int] = ..., end_index_inclusive: _Optional[int] = ...) -> None: ...
+    start_open: bool
+    end_open: bool
+    def __init__(self, start_index: _Optional[int] = ..., end_index_inclusive: _Optional[int] = ..., start_open: _Optional[bool] = ..., end_open: _Optional[bool] = ...) -> None: ...
 
 class Alignment(_message.Message):
     __slots__ = ("assembly", "chromosome", "strand", "source", "exons")

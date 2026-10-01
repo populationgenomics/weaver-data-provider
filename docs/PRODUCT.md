@@ -22,7 +22,8 @@ publisher's release ──build──▶ store + genome ──read──▶ Data
    one record in forty differs — and where they differ by an insertion or deletion, where the difference sits is a
    choice. NCBI publishes its choice as an alignment of every transcript to the assembly. The builder takes that
    alignment exon by exon and never splices the genome to stand in for a record, so the positions weaver computes are
-   the ones ClinVar's names and VariantValidator's projections follow.
+   the ones ClinVar's names and VariantValidator's projections follow. Every placement NCBI publishes is one, on a
+   chromosome, an alternate locus or a patch ([`design/placements.md`](design/placements.md)).
 1. **The files at rest are a contract.** A store is built once and read for years, from buckets this repo does not own.
    Its format is defined by the protos under `proto/`, evolves additively, and carries a format version the reader
    checks before it reads anything else. A shard of bundles is immutable at its path and named for its contents, so an

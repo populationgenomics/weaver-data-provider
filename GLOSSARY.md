@@ -10,8 +10,14 @@ Shared terms across weaver-data-provider docs and code.
   publisher (`RS_2024_08` for RefSeq).
 - **Transcript record** — the publisher's own sequence of a transcript (an `NM_` or `NR_` accession with its version).
   It usually matches the genome spliced at the transcript's exons, but not always.
-- **Alignment** (or **placement**) — where a transcript sits on an assembly: its exons, strand, and the per-exon CIGAR
-  that says how the record and the genome differ. Published by NCBI; never derived here.
+- **Alignment** (or **placement**) — where a transcript sits on one sequence of an assembly: its exons, strand, and the
+  per-exon CIGAR that says how the record and the genome differ. Published by NCBI; never derived here. A transcript can
+  have several — on X and on Y, on a chromosome and on a patch, or on each alternate locus that carries its gene.
+- **Alternate locus** — a scaffold holding another haplotype of a region too variable for one sequence (the MHC, the KIR
+  cluster). A gene the primary assembly's haplotype lacks is placed only on alternate loci. Alternate loci are `NT_`
+  accessions, as are the unlocalized and unplaced scaffolds of the primary assembly.
+- **Patch** — an `NW_` scaffold released between assembly versions: a fix patch corrects the primary assembly (and is
+  folded into the next major release), a novel patch adds alternate sequence.
 - **MANE** — the NCBI/EMBL-EBI project that picks one representative transcript per protein-coding gene (MANE Select)
   and matches it across RefSeq and Ensembl. It ranks transcripts; it does not place them.
 - **HGNC** — the committee that assigns human gene symbols; the source of each gene's current, previous and alias

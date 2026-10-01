@@ -323,11 +323,22 @@ def test_a_bundle_breaking_the_schema_is_refused_on_write(tmp_path: pathlib.Path
     assert list((tmp_path / 'shards').iterdir()) == []  # nothing half-written is left behind
 
 
+def test_a_bundle_whose_alignments_are_not_chromosome_first_is_refused_on_write(tmp_path: pathlib.Path) -> None:
+    disordered = bundle_pb2.GeneBundle()
+    disordered.CopyFrom(_BUNDLES[0])
+    on_patch = disordered.transcripts[0].alignments.add()
+    on_patch.CopyFrom(disordered.transcripts[0].alignments[0])
+    on_patch.chromosome = 'NW_000001.1'
+    disordered.transcripts[0].alignments.reverse()  # the patch now comes before the chromosome
+    with pytest.raises(build.BuildError, match=r'NM_000487\.2 alignments are ordered .*chromosomes first'):
+        store_build.write_shard([disordered], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))
+
+
 def test_a_bundle_citing_a_sequence_it_does_not_carry_is_refused_on_write(tmp_path: pathlib.Path) -> None:
     dangling = bundle_pb2.GeneBundle()
     dangling.CopyFrom(_BUNDLES[0])
     dangling.transcripts[0].sequence_digest = refget.digest(b'NOTCARRIED')  # well formed, but not in the bundle
-    with pytest.raises(build.BuildError, match=r'gene_bundle\.digests_resolve'):
+    with pytest.raises(build.BuildError, match=r'cites sequences it does not carry.*NM_000487\.2'):
         store_build.write_shard([dangling], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))
 
 
