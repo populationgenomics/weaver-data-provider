@@ -98,8 +98,6 @@ follows from where HGVS anchors them: `c.N` and `c.-N` count from the start codo
 positions, and the protein consequences, that depend on the end it lacks. weaver makes that call: the provider passes
 both flags on, and weaver refuses a position whose anchor is open. The alternative states were both wrong: served as
 whole, the CDS numbers from a codon the record lacks; served as non-coding, every `c.` name on it reads as non-coding.
-An older reader would ignore the flags and do the first, so they come with a new format version, which the genome
-catalogue shares: a genome in a bucket is rebuilt with its store although its layout did not change.
 
 ### An Ensembl placement is the annotation's coordinates, checked
 

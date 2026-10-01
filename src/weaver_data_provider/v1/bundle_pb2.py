@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$weaver_data_provider/v1/bundle.proto\x12\x17weaver_data_provider.v1\x1a\x1b\x62uf/validate/validate.proto\"\xe5\x01\n\nGeneBundle\x12\x33\n\x04gene\x18\x01 \x01(\x0b\x32\x1d.weaver_data_provider.v1.GeneB\x06\xbaH\x03\xc8\x01\x01\x12\x38\n\x0btranscripts\x18\x02 \x03(\x0b\x32#.weaver_data_provider.v1.Transcript\x12\x32\n\x08proteins\x18\x03 \x03(\x0b\x32 .weaver_data_provider.v1.Protein\x12\x34\n\tsequences\x18\x04 \x03(\x0b\x32!.weaver_data_provider.v1.Sequence\"\x9e\x01\n\x04Gene\x12\x17\n\x06symbol\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x0f\n\x07hgnc_id\x18\x02 \x01(\t\x12\x14\n\x0cncbi_gene_id\x18\x03 \x01(\t\x12\x17\n\x0f\x65nsembl_gene_id\x18\x04 \x01(\t\x12\x18\n\x10previous_symbols\x18\x05 \x03(\t\x12\x15\n\ralias_symbols\x18\x06 \x03(\t\x12\x0c\n\x04name\x18\x07 \x01(\t\"\x98\x04\n\nTranscript\x12\x1a\n\taccession\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x18\n\x07version\x18\x02 \x01(\rB\x07\xbaH\x04*\x02 \x00\x12\x41\n\tpublisher\x18\x03 \x01(\x0e\x32\".weaver_data_provider.v1.PublisherB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x45\n\x06status\x18\x04 \x01(\x0e\x32).weaver_data_provider.v1.TranscriptStatusB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x0f\n\x07\x62iotype\x18\x05 \x01(\t\x12;\n\x04tags\x18\x06 \x03(\x0e\x32\x1c.weaver_data_provider.v1.TagB\x0f\xbaH\x0c\x92\x01\t\"\x07\x82\x01\x04\x10\x01 \x00\x12\x37\n\x0fsequence_digest\x18\x07 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12)\n\x03\x63\x64s\x18\x08 \x01(\x0b\x32\x1c.weaver_data_provider.v1.Cds\x12\x19\n\x11protein_accession\x18\t \x01(\t\x12\x17\n\x0fprotein_version\x18\n \x01(\r\x12\x14\n\x0cmane_partner\x18\x0b \x01(\t\x12\x36\n\nalignments\x18\x0c \x03(\x0b\x32\".weaver_data_provider.v1.AlignmentJ\x04\x08\r\x10\x0eR\x10\x63\x64s_undetermined\"\xd5\x02\n\x03\x43\x64s\x12\x13\n\x0bstart_index\x18\x01 \x01(\r\x12\x1b\n\x13\x65nd_index_inclusive\x18\x02 \x01(\r\x12\x12\n\nstart_open\x18\x03 \x01(\x08\x12\x10\n\x08\x65nd_open\x18\x04 \x01(\x08:\xf5\x01\xbaH\xf1\x01\x1a\xee\x01\n\ncds.bounds\x12\x61start_index < end_index_inclusive, or <= where an end is open (both inclusive transcript indices)\x1a}this.start_open || this.end_open ? this.start_index <= this.end_index_inclusive : this.start_index < this.end_index_inclusive\"\xa4\x02\n\tAlignment\x12?\n\x08\x61ssembly\x18\x01 \x01(\x0e\x32!.weaver_data_provider.v1.AssemblyB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x1b\n\nchromosome\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12;\n\x06strand\x18\x03 \x01(\x0e\x32\x1f.weaver_data_provider.v1.StrandB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x44\n\x06source\x18\x04 \x01(\x0e\x32(.weaver_data_provider.v1.AlignmentSourceB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x36\n\x05\x65xons\x18\x05 \x03(\x0b\x32\x1d.weaver_data_provider.v1.ExonB\x08\xbaH\x05\x92\x01\x02\x08\x01\"\xef\x02\n\x04\x45xon\x12\x18\n\x10transcript_start\x18\x01 \x01(\r\x12\x16\n\x0etranscript_end\x18\x02 \x01(\r\x12\x14\n\x0cgenome_start\x18\x03 \x01(\r\x12\x1c\n\x14genome_end_inclusive\x18\x04 \x01(\r\x12\'\n\x05\x63igar\x18\x05 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^([0-9]+[=XID])+$:\xd7\x01\xbaH\xd3\x01\x1a\xd0\x01\n\nexon.spans\x12\x63transcript_start < transcript_end (half-open); genome_start <= genome_end_inclusive on both strands\x1a]this.transcript_start < this.transcript_end && this.genome_start <= this.genome_end_inclusive\"\xb2\x01\n\x07Protein\x12\x1a\n\taccession\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x18\n\x07version\x18\x02 \x01(\rB\x07\xbaH\x04*\x02 \x00\x12\x37\n\x0fsequence_digest\x18\x03 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12\x1c\n\x14transcript_accession\x18\x04 \x01(\t\x12\x1a\n\x12transcript_version\x18\x05 \x01(\r\"\x96\x01\n\x08Sequence\x12.\n\x06\x64igest\x18\x01 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12?\n\x08\x61lphabet\x18\x02 \x01(\x0e\x32!.weaver_data_provider.v1.AlphabetB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x19\n\x08residues\x18\x03 \x01(\x0c\x42\x07\xbaH\x04z\x02\x10\x01*S\n\tPublisher\x12\x19\n\x15PUBLISHER_UNSPECIFIED\x10\x00\x12\x14\n\x10PUBLISHER_REFSEQ\x10\x01\x12\x15\n\x11PUBLISHER_ENSEMBL\x10\x02*\x98\x01\n\x10TranscriptStatus\x12!\n\x1dTRANSCRIPT_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n\x19TRANSCRIPT_STATUS_CURRENT\x10\x01\x12 \n\x1cTRANSCRIPT_STATUS_SUPERSEDED\x10\x02\x12 \n\x1cTRANSCRIPT_STATUS_SUPPRESSED\x10\x03*}\n\x03Tag\x12\x13\n\x0fTAG_UNSPECIFIED\x10\x00\x12\x13\n\x0fTAG_MANE_SELECT\x10\x01\x12\x1a\n\x16TAG_MANE_PLUS_CLINICAL\x10\x02\x12\x15\n\x11TAG_REFSEQ_SELECT\x10\x03\x12\x19\n\x15TAG_ENSEMBL_CANONICAL\x10\x04*N\n\x08\x41ssembly\x12\x18\n\x14\x41SSEMBLY_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x41SSEMBLY_GRCH38\x10\x01\x12\x13\n\x0f\x41SSEMBLY_GRCH37\x10\x02*C\n\x06Strand\x12\x16\n\x12STRAND_UNSPECIFIED\x10\x00\x12\x0f\n\x0bSTRAND_PLUS\x10\x01\x12\x10\n\x0cSTRAND_MINUS\x10\x02*\xb5\x01\n\x0f\x41lignmentSource\x12 \n\x1c\x41LIGNMENT_SOURCE_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x41LIGNMENT_SOURCE_NCBI_BAM\x10\x01\x12!\n\x1d\x41LIGNMENT_SOURCE_MANE_PARTNER\x10\x02\x12\x1d\n\x19\x41LIGNMENT_SOURCE_COMPUTED\x10\x03\x12\x1f\n\x1b\x41LIGNMENT_SOURCE_ANNOTATION\x10\x04*S\n\x08\x41lphabet\x12\x18\n\x14\x41LPHABET_UNSPECIFIED\x10\x00\x12\x17\n\x13\x41LPHABET_NUCLEOTIDE\x10\x01\x12\x14\n\x10\x41LPHABET_PROTEIN\x10\x02\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$weaver_data_provider/v1/bundle.proto\x12\x17weaver_data_provider.v1\x1a\x1b\x62uf/validate/validate.proto\"\xe5\x01\n\nGeneBundle\x12\x33\n\x04gene\x18\x01 \x01(\x0b\x32\x1d.weaver_data_provider.v1.GeneB\x06\xbaH\x03\xc8\x01\x01\x12\x38\n\x0btranscripts\x18\x02 \x03(\x0b\x32#.weaver_data_provider.v1.Transcript\x12\x32\n\x08proteins\x18\x03 \x03(\x0b\x32 .weaver_data_provider.v1.Protein\x12\x34\n\tsequences\x18\x04 \x03(\x0b\x32!.weaver_data_provider.v1.Sequence\"\x9e\x01\n\x04Gene\x12\x17\n\x06symbol\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x0f\n\x07hgnc_id\x18\x02 \x01(\t\x12\x14\n\x0cncbi_gene_id\x18\x03 \x01(\t\x12\x17\n\x0f\x65nsembl_gene_id\x18\x04 \x01(\t\x12\x18\n\x10previous_symbols\x18\x05 \x03(\t\x12\x15\n\ralias_symbols\x18\x06 \x03(\t\x12\x0c\n\x04name\x18\x07 \x01(\t\"\x80\x04\n\nTranscript\x12\x1a\n\taccession\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x18\n\x07version\x18\x02 \x01(\rB\x07\xbaH\x04*\x02 \x00\x12\x41\n\tpublisher\x18\x03 \x01(\x0e\x32\".weaver_data_provider.v1.PublisherB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x45\n\x06status\x18\x04 \x01(\x0e\x32).weaver_data_provider.v1.TranscriptStatusB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x0f\n\x07\x62iotype\x18\x05 \x01(\t\x12;\n\x04tags\x18\x06 \x03(\x0e\x32\x1c.weaver_data_provider.v1.TagB\x0f\xbaH\x0c\x92\x01\t\"\x07\x82\x01\x04\x10\x01 \x00\x12\x37\n\x0fsequence_digest\x18\x07 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12)\n\x03\x63\x64s\x18\x08 \x01(\x0b\x32\x1c.weaver_data_provider.v1.Cds\x12\x19\n\x11protein_accession\x18\t \x01(\t\x12\x17\n\x0fprotein_version\x18\n \x01(\r\x12\x14\n\x0cmane_partner\x18\x0b \x01(\t\x12\x36\n\nalignments\x18\x0c \x03(\x0b\x32\".weaver_data_provider.v1.Alignment\"\xd5\x02\n\x03\x43\x64s\x12\x13\n\x0bstart_index\x18\x01 \x01(\r\x12\x1b\n\x13\x65nd_index_inclusive\x18\x02 \x01(\r\x12\x12\n\nstart_open\x18\x03 \x01(\x08\x12\x10\n\x08\x65nd_open\x18\x04 \x01(\x08:\xf5\x01\xbaH\xf1\x01\x1a\xee\x01\n\ncds.bounds\x12\x61start_index < end_index_inclusive, or <= where an end is open (both inclusive transcript indices)\x1a}this.start_open || this.end_open ? this.start_index <= this.end_index_inclusive : this.start_index < this.end_index_inclusive\"\xa4\x02\n\tAlignment\x12?\n\x08\x61ssembly\x18\x01 \x01(\x0e\x32!.weaver_data_provider.v1.AssemblyB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x1b\n\nchromosome\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12;\n\x06strand\x18\x03 \x01(\x0e\x32\x1f.weaver_data_provider.v1.StrandB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x44\n\x06source\x18\x04 \x01(\x0e\x32(.weaver_data_provider.v1.AlignmentSourceB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x36\n\x05\x65xons\x18\x05 \x03(\x0b\x32\x1d.weaver_data_provider.v1.ExonB\x08\xbaH\x05\x92\x01\x02\x08\x01\"\xef\x02\n\x04\x45xon\x12\x18\n\x10transcript_start\x18\x01 \x01(\r\x12\x16\n\x0etranscript_end\x18\x02 \x01(\r\x12\x14\n\x0cgenome_start\x18\x03 \x01(\r\x12\x1c\n\x14genome_end_inclusive\x18\x04 \x01(\r\x12\'\n\x05\x63igar\x18\x05 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^([0-9]+[=XID])+$:\xd7\x01\xbaH\xd3\x01\x1a\xd0\x01\n\nexon.spans\x12\x63transcript_start < transcript_end (half-open); genome_start <= genome_end_inclusive on both strands\x1a]this.transcript_start < this.transcript_end && this.genome_start <= this.genome_end_inclusive\"\xb2\x01\n\x07Protein\x12\x1a\n\taccession\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x18\n\x07version\x18\x02 \x01(\rB\x07\xbaH\x04*\x02 \x00\x12\x37\n\x0fsequence_digest\x18\x03 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12\x1c\n\x14transcript_accession\x18\x04 \x01(\t\x12\x1a\n\x12transcript_version\x18\x05 \x01(\r\"\x96\x01\n\x08Sequence\x12.\n\x06\x64igest\x18\x01 \x01(\tB\x1e\xbaH\x1br\x19\x32\x17^SQ\\.[A-Za-z0-9_-]{32}$\x12?\n\x08\x61lphabet\x18\x02 \x01(\x0e\x32!.weaver_data_provider.v1.AlphabetB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x19\n\x08residues\x18\x03 \x01(\x0c\x42\x07\xbaH\x04z\x02\x10\x01*S\n\tPublisher\x12\x19\n\x15PUBLISHER_UNSPECIFIED\x10\x00\x12\x14\n\x10PUBLISHER_REFSEQ\x10\x01\x12\x15\n\x11PUBLISHER_ENSEMBL\x10\x02*\x98\x01\n\x10TranscriptStatus\x12!\n\x1dTRANSCRIPT_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n\x19TRANSCRIPT_STATUS_CURRENT\x10\x01\x12 \n\x1cTRANSCRIPT_STATUS_SUPERSEDED\x10\x02\x12 \n\x1cTRANSCRIPT_STATUS_SUPPRESSED\x10\x03*}\n\x03Tag\x12\x13\n\x0fTAG_UNSPECIFIED\x10\x00\x12\x13\n\x0fTAG_MANE_SELECT\x10\x01\x12\x1a\n\x16TAG_MANE_PLUS_CLINICAL\x10\x02\x12\x15\n\x11TAG_REFSEQ_SELECT\x10\x03\x12\x19\n\x15TAG_ENSEMBL_CANONICAL\x10\x04*N\n\x08\x41ssembly\x12\x18\n\x14\x41SSEMBLY_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x41SSEMBLY_GRCH38\x10\x01\x12\x13\n\x0f\x41SSEMBLY_GRCH37\x10\x02*C\n\x06Strand\x12\x16\n\x12STRAND_UNSPECIFIED\x10\x00\x12\x0f\n\x0bSTRAND_PLUS\x10\x01\x12\x10\n\x0cSTRAND_MINUS\x10\x02*\xb5\x01\n\x0f\x41lignmentSource\x12 \n\x1c\x41LIGNMENT_SOURCE_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x41LIGNMENT_SOURCE_NCBI_BAM\x10\x01\x12!\n\x1d\x41LIGNMENT_SOURCE_MANE_PARTNER\x10\x02\x12\x1d\n\x19\x41LIGNMENT_SOURCE_COMPUTED\x10\x03\x12\x1f\n\x1b\x41LIGNMENT_SOURCE_ANNOTATION\x10\x04*S\n\x08\x41lphabet\x12\x18\n\x14\x41LPHABET_UNSPECIFIED\x10\x00\x12\x17\n\x13\x41LPHABET_NUCLEOTIDE\x10\x01\x12\x14\n\x10\x41LPHABET_PROTEIN\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -76,34 +76,34 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SEQUENCE'].fields_by_name['alphabet']._serialized_options = b'\272H\007\202\001\004\020\001 \000'
   _globals['_SEQUENCE'].fields_by_name['residues']._loaded_options = None
   _globals['_SEQUENCE'].fields_by_name['residues']._serialized_options = b'\272H\004z\002\020\001'
-  _globals['_PUBLISHER']._serialized_start=2369
-  _globals['_PUBLISHER']._serialized_end=2452
-  _globals['_TRANSCRIPTSTATUS']._serialized_start=2455
-  _globals['_TRANSCRIPTSTATUS']._serialized_end=2607
-  _globals['_TAG']._serialized_start=2609
-  _globals['_TAG']._serialized_end=2734
-  _globals['_ASSEMBLY']._serialized_start=2736
-  _globals['_ASSEMBLY']._serialized_end=2814
-  _globals['_STRAND']._serialized_start=2816
-  _globals['_STRAND']._serialized_end=2883
-  _globals['_ALIGNMENTSOURCE']._serialized_start=2886
-  _globals['_ALIGNMENTSOURCE']._serialized_end=3067
-  _globals['_ALPHABET']._serialized_start=3069
-  _globals['_ALPHABET']._serialized_end=3152
+  _globals['_PUBLISHER']._serialized_start=2345
+  _globals['_PUBLISHER']._serialized_end=2428
+  _globals['_TRANSCRIPTSTATUS']._serialized_start=2431
+  _globals['_TRANSCRIPTSTATUS']._serialized_end=2583
+  _globals['_TAG']._serialized_start=2585
+  _globals['_TAG']._serialized_end=2710
+  _globals['_ASSEMBLY']._serialized_start=2712
+  _globals['_ASSEMBLY']._serialized_end=2790
+  _globals['_STRAND']._serialized_start=2792
+  _globals['_STRAND']._serialized_end=2859
+  _globals['_ALIGNMENTSOURCE']._serialized_start=2862
+  _globals['_ALIGNMENTSOURCE']._serialized_end=3043
+  _globals['_ALPHABET']._serialized_start=3045
+  _globals['_ALPHABET']._serialized_end=3128
   _globals['_GENEBUNDLE']._serialized_start=95
   _globals['_GENEBUNDLE']._serialized_end=324
   _globals['_GENE']._serialized_start=327
   _globals['_GENE']._serialized_end=485
   _globals['_TRANSCRIPT']._serialized_start=488
-  _globals['_TRANSCRIPT']._serialized_end=1024
-  _globals['_CDS']._serialized_start=1027
-  _globals['_CDS']._serialized_end=1368
-  _globals['_ALIGNMENT']._serialized_start=1371
-  _globals['_ALIGNMENT']._serialized_end=1663
-  _globals['_EXON']._serialized_start=1666
-  _globals['_EXON']._serialized_end=2033
-  _globals['_PROTEIN']._serialized_start=2036
-  _globals['_PROTEIN']._serialized_end=2214
-  _globals['_SEQUENCE']._serialized_start=2217
-  _globals['_SEQUENCE']._serialized_end=2367
+  _globals['_TRANSCRIPT']._serialized_end=1000
+  _globals['_CDS']._serialized_start=1003
+  _globals['_CDS']._serialized_end=1344
+  _globals['_ALIGNMENT']._serialized_start=1347
+  _globals['_ALIGNMENT']._serialized_end=1639
+  _globals['_EXON']._serialized_start=1642
+  _globals['_EXON']._serialized_end=2009
+  _globals['_PROTEIN']._serialized_start=2012
+  _globals['_PROTEIN']._serialized_end=2190
+  _globals['_SEQUENCE']._serialized_start=2193
+  _globals['_SEQUENCE']._serialized_end=2343
 # @@protoc_insertion_point(module_scope)

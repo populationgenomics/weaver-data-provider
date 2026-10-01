@@ -7,4 +7,4 @@ import importlib.metadata
 __version__ = importlib.metadata.version('weaver-data-provider')
 
 # The at-rest format this version writes and reads. A reader refuses any other, rather than misreading it.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 1

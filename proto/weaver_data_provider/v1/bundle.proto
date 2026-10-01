@@ -115,9 +115,6 @@ message Transcript {
   // then scaffolds (`NT_`), then patches (`NW_`), each by accession, so the first is the chromosome
   // placement where there is one; the writer refuses any other order.
   repeated Alignment alignments = 12;
-  // Marked an incomplete CDS in format-2 stores cut from unmerged branches; never reused.
-  reserved 13;
-  reserved "cds_undetermined";
 }
 
 // The coding sequence as 0-based transcript indices, both inclusive: `start_index` is the first
