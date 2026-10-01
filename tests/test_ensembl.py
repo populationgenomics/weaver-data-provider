@@ -40,6 +40,7 @@ from weaver_data_provider import provider as provider_mod
 from weaver_data_provider import store as store_mod
 from weaver_data_provider.build import cli, ensembl
 from weaver_data_provider.build import genome as genome_build
+from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
 
 CHROM, PATCH = 'NC_000099.1', 'NW_000001.1'
@@ -621,3 +622,32 @@ def test_a_description_loses_the_note_of_where_ensembl_took_it_from(tmp_path: pa
         for line in GFF
     ]
     assert _by_symbol(_release(tmp_path, gff=gff, hgnc=[]))['PLUSE'].gene.name == 'plus gene'
+
+
+def _provider(tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """The synthetic release built, indexed and opened as weaver's provider."""
+    release = _release(tmp_path)
+    shard = store_build.write_shard(
+        ensembl.bundles(release), tmp_path / 'shards', release='116', inputs=release.inputs()
+    )
+    store_build.write_index(tmp_path / 'store', [shard], assembly=bundle_pb2.ASSEMBLY_GRCH38)
+    return provider_mod.BundleProvider(
+        store_mod.BundleStore(str(tmp_path / 'store')), genome_mod.Genome(str(release.genome))
+    )
+
+
+def test_ensembl_accessions_are_identified_as_transcripts_and_proteins(tmp_path: pathlib.Path) -> None:
+    provider = _provider(tmp_path)
+    kinds = (provider.get_identifier_type('ENST00000000010.2'), provider.get_identifier_type('ENSP00000000010.1'))
+    assert kinds == (weaver.IdentifierType.TranscriptAccession, weaver.IdentifierType.ProteinAccession)
+
+
+def test_an_ensembl_transcripts_protein_is_its_c_to_p_target(tmp_path: pathlib.Path) -> None:
+    assert _provider(tmp_path).get_symbol_accessions('ENST00000000010.2', 'c', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'ENSP00000000010.1')
+    ]
+
+
+def test_an_ensembl_protein_is_read_by_its_accession(tmp_path: pathlib.Path) -> None:
+    provider = _provider(tmp_path)
+    assert provider.get_seq('ENSP00000000010.1', 0, None, weaver.IdentifierType.ProteinAccession) == 'MAEQPLS'
