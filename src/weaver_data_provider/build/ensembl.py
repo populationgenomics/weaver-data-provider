@@ -49,6 +49,7 @@ _REFSEQ_ALIAS = re.compile(r'^N[CTW]_\d+\.\d+$')
 _REGION_KINDS = frozenset({'chromosome', 'scaffold', 'supercontig'})
 _GENE_KINDS = frozenset({'gene', 'ncRNA_gene', 'pseudogene'})
 _GTF_ATTRIBUTE = re.compile(r'(\w+) "([^"]*)"')
+_SOURCE = re.compile(r'\s*\[Source:[^]]*\]$')  # where Ensembl took the description from
 
 
 @dataclasses.dataclass(frozen=True)
@@ -134,7 +135,7 @@ class _Annotation:
         self.genes[attrs['ID']] = _Gene(
             gene_id=attrs['gene_id'],
             symbol=attrs.get('Name', ''),
-            description=urllib.parse.unquote(attrs.get('description', '')),
+            description=_SOURCE.sub('', urllib.parse.unquote(attrs.get('description', ''))),
         )
 
     def add_transcript(self, sequence: str, kind: str, strand: str, attrs: dict[str, str]) -> None:
@@ -291,7 +292,7 @@ class _Loaded:
     proteins: dict[str, bytes]
     genome: genome_mod.Genome
     whole_cds: dict[str, bool]  # by versioned accession, from the GTF
-    hgnc: dict[str, dict[str, str]]  # by Ensembl gene id
+    hgnc: dict[str, list[dict[str, str]]]  # by Ensembl gene id
     mane: dict[str, tuple[str, str]]  # Ensembl accession.version -> (RefSeq partner accession.version, MANE status)
     partner_placements: dict[str, list[common.Placement]]  # NCBI's chromosome alignments of each MANE partner
     without_sequence: collections.Counter[str]  # transcripts Ensembl publishes no sequence for, by feature type
@@ -488,7 +489,7 @@ def _add_transcript(
 
 
 def _gene_bundle(gene: _Gene, members: Iterable[_Transcript], loaded: _Loaded, tally: _Tally) -> bundle_pb2.GeneBundle:
-    hgnc = loaded.hgnc.get(gene.gene_id)
+    hgnc, others = common.hgnc_row(loaded.hgnc.get(gene.gene_id), gene.symbol)
     message = common.gene_message(
         feature_id=gene.gene_id,
         symbol=gene.symbol or gene.gene_id,
@@ -496,7 +497,7 @@ def _gene_bundle(gene: _Gene, members: Iterable[_Transcript], loaded: _Loaded, t
         ncbi_gene_id='',
         ensembl_gene_id=gene.gene_id,
         description=gene.description,
-        synonyms=(),
+        synonyms=others,
         hgnc=hgnc,
     )
     bundle = bundle_pb2.GeneBundle(gene=message)

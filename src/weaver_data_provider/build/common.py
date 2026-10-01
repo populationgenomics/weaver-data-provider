@@ -87,16 +87,42 @@ def _columns(reader: csv.DictReader[str], needed: frozenset[str], *, named: str)
         raise build.BuildError(f'{named}: columns {sorted(missing)} are not in the table; its schema has changed')
 
 
-def read_hgnc(path: pathlib.Path, key: str) -> dict[str, dict[str, str]]:
-    """HGNC's complete set keyed by an id column, `entrez_id` or `ensembl_gene_id`; rows without one are dropped.
+def read_hgnc(path: pathlib.Path, key: str) -> dict[str, list[dict[str, str]]]:
+    """HGNC's complete set grouped by an id column, `entrez_id` or `ensembl_gene_id`; rows without one are dropped.
+
+    A key can hold more than one row: HGNC maps two of its genes to one Ensembl gene in three cases.
 
     Raises:
         build.BuildError: If the table lacks a column the builders read.
     """
+    out: dict[str, list[dict[str, str]]] = collections.defaultdict(list)
     with path.open(encoding='utf-8') as fh:
         rows = csv.DictReader(fh, delimiter='\t')
         _columns(rows, HGNC_COLUMNS, named='hgnc')
-        return {row[key]: row for row in rows if row[key]}
+        for row in rows:
+            if row[key]:
+                out[row[key]].append(row)
+    return dict(out)
+
+
+def hgnc_row(rows: list[dict[str, str]] | None, symbol: str) -> tuple[dict[str, str] | None, list[str]]:
+    """The HGNC row naming a gene, and every symbol of the other rows its key holds.
+
+    The row is the one whose symbol is the annotation's, or else the lowest HGNC id. The other rows'
+    symbols, previous and alias ones too, stay findable as the gene's aliases.
+    """
+    if not rows:
+        return None, []
+    named = [r for r in rows if r['symbol'] == symbol]
+    row = named[0] if named else min(rows, key=lambda r: int(r['hgnc_id'].removeprefix('HGNC:')))
+    others = [
+        s
+        for other in rows
+        if other is not row
+        for s in (other['symbol'], *other['prev_symbol'].split('|'), *other['alias_symbol'].split('|'))
+        if s
+    ]
+    return row, others
 
 
 def read_mane(path: pathlib.Path) -> list[dict[str, str]]:

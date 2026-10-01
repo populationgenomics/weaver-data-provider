@@ -321,6 +321,7 @@ def _release(
     extra_references: dict[str, int] | None = None,
     genome: dict[str, str] = GENOME,
     assembly: bundle_pb2.Assembly = bundle_pb2.ASSEMBLY_GRCH38,
+    hgnc: list[list[str]] = HGNC,
 ) -> ensembl.Release:
     """The synthetic release written under `tmp_path`; each keyword replaces one input."""
     return ensembl.Release(
@@ -332,7 +333,7 @@ def _release(
         proteins=_fasta(tmp_path / 'pep.fa.gz', peptides, kind='pep'),
         genome=_genome(tmp_path, genome),
         alignments=(_bam(tmp_path / 'alns.bam', reads, extra_references or {}),),
-        hgnc=_tsv(tmp_path / 'hgnc.txt', HGNC_COLUMNS, HGNC, gzipped=False),
+        hgnc=_tsv(tmp_path / 'hgnc.txt', HGNC_COLUMNS, hgnc, gzipped=False),
         mane=_tsv(tmp_path / 'mane.txt.gz', ['RefSeq_nuc', 'Ensembl_nuc', 'MANE_status'], mane, gzipped=True),
     )
 
@@ -591,3 +592,32 @@ def test_the_built_commands_feed_weaver(tmp_path: pathlib.Path, capsys: pytest.C
     variant = weaver.parse('ENST00000000010.2:c.1A>G')
     assert variant.validate(provider)
     assert mapper.c_to_g(variant, CHROM).format() == f'{CHROM}:g.104A>G'
+
+
+# two HGNC genes Ensembl annotates as one, as HGNC maps LINC00595 and LINC00856 to ENSG00000230417
+_PLUSE_TWICE = [['HGNC:9', 'PLUSB', 'plus gene B', '', 'OLDPLUSB', '9', 'ENSG00000000010'], *HGNC]
+
+
+def test_of_two_hgnc_rows_for_a_gene_the_one_named_as_the_annotation_names_it(tmp_path: pathlib.Path) -> None:
+    gene = _by_symbol(_release(tmp_path, hgnc=_PLUSE_TWICE))['PLUSE'].gene
+    assert (gene.symbol, gene.hgnc_id) == ('PLUSE', 'HGNC:10')  # not PLUSB, whose id is lower
+
+
+def test_the_other_hgnc_rows_symbols_stay_findable_as_aliases(tmp_path: pathlib.Path) -> None:
+    gene = _by_symbol(_release(tmp_path, hgnc=_PLUSE_TWICE))['PLUSE'].gene
+    assert {'PLUSB', 'OLDPLUSB'} <= set(gene.alias_symbols)
+
+
+def test_of_two_hgnc_rows_neither_named_as_the_annotation_the_lowest_id_names_the_gene(tmp_path: pathlib.Path) -> None:
+    gff = [line.replace('Name=PLUSE;', 'Name=PLUSX;') for line in GFF]
+    bundles = _by_symbol(_release(tmp_path, gff=gff, hgnc=_PLUSE_TWICE))
+    assert (bundles['PLUSB'].gene.symbol, bundles['PLUSB'].gene.hgnc_id) == ('PLUSB', 'HGNC:9')
+
+
+def test_a_description_loses_the_note_of_where_ensembl_took_it_from(tmp_path: pathlib.Path) -> None:
+    # without HGNC's row the name is the annotation's description, which Ensembl ends with its source
+    gff = [
+        line.replace('description=plus%20gene', 'description=plus gene [Source:HGNC Symbol%3BAcc:HGNC:10]')
+        for line in GFF
+    ]
+    assert _by_symbol(_release(tmp_path, gff=gff, hgnc=[]))['PLUSE'].gene.name == 'plus gene'

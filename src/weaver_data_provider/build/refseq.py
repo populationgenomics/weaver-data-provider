@@ -311,7 +311,7 @@ class _Loaded:
     sequences: dict[str, bytes]  # transcript records by versioned accession
     proteins: dict[str, bytes]
     placements: dict[tuple[str, str], common.Placement]  # by (versioned accession, sequence)
-    hgnc: dict[str, dict[str, str]]  # by NCBI GeneID
+    hgnc: dict[str, list[dict[str, str]]]  # by NCBI GeneID
     mane: dict[str, tuple[str, str]]
     record_cds: dict[str, _RecordCds]  # by versioned accession
 
@@ -477,6 +477,7 @@ def _add_transcript(
 
 
 def _gene_bundle(gene: _Gene, members: Iterable[_Transcript], loaded: _Loaded) -> bundle_pb2.GeneBundle:
+    hgnc, others = common.hgnc_row(loaded.hgnc.get(gene.dbxrefs.get('GeneID', '')), gene.symbol)
     message = common.gene_message(
         feature_id=gene.gene_id,
         symbol=gene.symbol,
@@ -484,8 +485,8 @@ def _gene_bundle(gene: _Gene, members: Iterable[_Transcript], loaded: _Loaded) -
         ncbi_gene_id=gene.dbxrefs.get('GeneID', ''),
         ensembl_gene_id=gene.dbxrefs.get('Ensembl', ''),
         description=gene.description,
-        synonyms=gene.synonyms,
-        hgnc=loaded.hgnc.get(gene.dbxrefs.get('GeneID', '')),
+        synonyms=[*gene.synonyms, *others],
+        hgnc=hgnc,
     )
     bundle = bundle_pb2.GeneBundle(gene=message)
     digests: dict[str, bundle_pb2.Sequence] = {}
