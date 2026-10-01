@@ -616,6 +616,12 @@ def test_aliases_gather_hgnc_and_the_annotation(tmp_path: pathlib.Path) -> None:
     assert list(gene.previous_symbols) == ['OLDPLUS']
 
 
+def test_an_annotation_synonym_hgnc_lists_as_a_previous_symbol_is_not_an_alias_too(tmp_path: pathlib.Path) -> None:
+    gff = [line.replace('gene_synonym=PLS', 'gene_synonym=PLS,OLDPLUS') for line in GFF]
+    gene = _by_symbol(_release(tmp_path, gff=gff))['PLUS'].gene
+    assert 'OLDPLUS' not in gene.alias_symbols
+
+
 def test_mane_select_is_tagged_with_its_ensembl_partner(tmp_path: pathlib.Path) -> None:
     (transcript,) = _by_symbol(_release(tmp_path))['PLUS'].transcripts
     assert transcript.mane_partner == 'ENST00000000010.1'
@@ -860,6 +866,43 @@ def test_a_cds_in_a_record_with_no_version_line_fails_the_build(tmp_path: pathli
     text = gzip.decompress(release.records.read_bytes()).decode('ascii')
     release.records.write_bytes(gzip.compress(text.replace('VERSION     NM_000020.1\n', '', 1).encode('ascii')))
     with pytest.raises(build.BuildError, match='a CDS in a record with no VERSION line'):
+        list(refseq.bundles(release))
+
+
+@pytest.mark.parametrize(
+    'location',
+    [
+        'complement(5..30)',  # a minus-strand CDS on a transcript record
+        'order(5..17,19..30)',  # not one contiguous reading
+        'join(NM_000001.2:5..17,19..30)',  # a range on another record, whose digits are no bound of this one
+        '5^6',  # a site between two bases
+        '5',  # a single base
+        '30..5',  # backwards
+        'join(19..30,5..17)',  # a join whose ranges run backwards
+        'join(5..>17,19..30)',  # open at an inner bound
+    ],
+)
+def test_a_cds_location_of_another_shape_fails_the_build(tmp_path: pathlib.Path, location: str) -> None:
+    release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': location})
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2: CDS location'):
+        list(refseq.bundles(release))
+
+
+def test_a_file_ending_inside_a_cds_location_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    cut = text.index('     CDS             5..30')
+    release.records.write_bytes(gzip.compress((text[:cut] + '     CDS             join(5..17,\n').encode('ascii')))
+    with pytest.raises(build.BuildError, match=r'ends inside the CDS location of NM_000010\.2'):
+        list(refseq.bundles(release))
+
+
+def test_a_version_line_with_no_accession_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _release(tmp_path)
+    text = gzip.decompress(release.records.read_bytes()).decode('ascii')
+    blanked = text.replace('VERSION     NM_000020.1\n', 'VERSION\n')
+    release.records.write_bytes(gzip.compress(blanked.encode('ascii')))
+    with pytest.raises(build.BuildError, match='a VERSION line with no accession'):
         list(refseq.bundles(release))
 
 

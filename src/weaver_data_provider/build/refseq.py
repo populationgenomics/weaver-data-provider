@@ -36,6 +36,8 @@ from weaver_data_provider.v1 import bundle_pb2
 
 _TAGS = {**common.MANE_STATUS_TAGS, 'RefSeq Select': bundle_pb2.TAG_REFSEQ_SELECT}
 _ACCESSION = re.compile(r'^([A-Z]{2}_\d+)\.(\d+)$')
+_CDS_RANGE = re.compile(r'<?(\d+)\.\.>?(\d+)')
+_CDS_LOCATION = re.compile(rf'{_CDS_RANGE.pattern}|join\({_CDS_RANGE.pattern}(?:,{_CDS_RANGE.pattern})+\)')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -212,6 +214,24 @@ class _RecordCds:
     partial: bool
 
 
+def _parse_record_cds(version: str, location: str) -> _RecordCds:
+    """One CDS location, `a..b` or a forward `join` of such ranges, either end possibly open.
+
+    Raises:
+        build.BuildError: If the location is any other shape — `complement`, `order`, a remote
+            accession, a single base — or its ranges do not run forward.
+    """
+    if _CDS_LOCATION.fullmatch(location) is None:
+        raise build.BuildError(f'{version}: CDS location {location!r} is not a range or a forward join of ranges')
+    ranges = [(int(a), int(b)) for a, b in _CDS_RANGE.findall(location)]
+    bounds = [n for r in ranges for n in r]
+    if bounds != sorted(bounds):
+        raise build.BuildError(f'{version}: CDS location {location!r} does not run forward')
+    if '<' in location.partition(',')[2] or '>' in location.rpartition(',')[0]:
+        raise build.BuildError(f'{version}: CDS location {location!r} is open at an inner bound')
+    return _RecordCds(ranges[0][0] - 1, ranges[-1][1] - 1, partial='<' in location or '>' in location)
+
+
 def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
     """Each GenBank record's CDS in the record's own coordinates, keyed by versioned accession.
 
@@ -219,7 +239,9 @@ def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
     bounds, the first and last coding bases, which is what c. numbering needs.
 
     Raises:
-        build.BuildError: If a record states more than one CDS, or a CDS before any VERSION line.
+        build.BuildError: If a record states more than one CDS, a CDS before any VERSION line, a VERSION
+            line with no accession, a location of a shape `_parse_record_cds` refuses, or the file ends
+            inside a location.
     """
     out: dict[str, _RecordCds] = {}
     version: str | None = None
@@ -228,19 +250,22 @@ def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
             if line.startswith('LOCUS'):
                 version = None  # a record without a VERSION line must not inherit the previous one's
             elif line.startswith('VERSION'):
-                version = line.split()[1]
+                fields = line.split()
+                if len(fields) < 2:
+                    raise build.BuildError(f'{path}: a VERSION line with no accession')
+                version = fields[1]
             elif line.startswith('     CDS '):
                 if version is None:
                     raise build.BuildError(f'{path}: a CDS in a record with no VERSION line: {line.strip()[:60]!r}')
                 location = line[21:].strip()
                 while location.count('(') > location.count(')'):  # a join may wrap onto the next lines
-                    location += next(fh).strip()
+                    continued = next(fh, None)
+                    if continued is None:
+                        raise build.BuildError(f'{path}: ends inside the CDS location of {version}')
+                    location += continued.strip()
                 if version in out:
                     raise build.BuildError(f'{path}: {version} states more than one CDS')
-                numbers = [int(n) for n in re.findall(r'\d+', location)]
-                out[version] = _RecordCds(
-                    min(numbers) - 1, max(numbers) - 1, partial='<' in location or '>' in location
-                )
+                out[version] = _parse_record_cds(version, location)
     return out
 
 
@@ -350,7 +375,7 @@ def _load(release: Release) -> _Loaded:
 
 
 def _check_coverage(loaded: _Loaded) -> None:
-    """Every coding transcript has an alignment and a stated CDS, and every transcript a record."""
+    """Every coding transcript has an alignment and a GenBank CDS, and every transcript a sequence."""
     transcripts = loaded.annotation.transcripts
     coding = {t for t, r in transcripts.items() if r.coding or t in loaded.record_cds}
     unaligned = sorted(t for t in coding if not any((t, c) in loaded.placements for c in transcripts[t].placements))
@@ -399,15 +424,16 @@ def _cross_check(versioned: str, record: _Transcript, aligned: list[common.Place
     """Warn where a placement that states the whole CDS projects it elsewhere than the record states it.
 
     A placement whose annotation leaves an outer end of the CDS open — the start codon in bases that
-    sequence lacks — states no bound to check there, and is passed over.
+    sequence lacks — states no bound to check there, and is passed over. A record stating a CDS the
+    annotation gives none of is a warning too: the transcript is bundled with the record's CDS and,
+    since the protein id comes from the annotation's CDS rows, no protein.
     """
     if not record.coding:
-        if aligned:
-            warnings.warn(
-                f'{versioned}: CDS {stated.start}..{stated.end} taken from its record; the annotation gives it no CDS',
-                build.BuildWarning,
-                stacklevel=3,
-            )
+        warnings.warn(
+            f'{versioned}: CDS {stated.start}..{stated.end} taken from its record; the annotation gives it no CDS',
+            build.BuildWarning,
+            stacklevel=1,
+        )
         return
     for placement in aligned:
         annotated = record.placements[placement.chromosome]
@@ -427,7 +453,7 @@ def _cross_check(versioned: str, record: _Transcript, aligned: list[common.Place
         warnings.warn(
             f'{versioned}: CDS {stated.start}..{stated.end} taken from its record; {disagreement}',
             build.BuildWarning,
-            stacklevel=3,
+            stacklevel=1,
         )
 
 
