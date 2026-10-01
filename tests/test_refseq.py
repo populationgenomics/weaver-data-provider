@@ -22,7 +22,9 @@ as a BAM that pysam writes — so no fixture comes from the builder itself. The 
 - MT-TF, a mitochondrial tRNA with no transcript accession.
 
 Each coding record's CDS is written in a GenBank flat file, as NCBI's rna.gbff states it, in the
-record's own coordinates.
+record's own coordinates. The same files, less the sequence sets and plus a status table, are NCBI's
+historical set: the records carry the sequences and translations, and the table says which versions
+Entrez holds to be replaced or suppressed.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ import gzip
 import pathlib
 import random
 import warnings
+from collections.abc import Callable
 
 import pysam.libcalignedsegment
 import pysam.libcalignmentfile
@@ -249,8 +252,21 @@ def _fasta(path: pathlib.Path, records: dict[str, str]) -> pathlib.Path:
     return path
 
 
-def _genbank(path: pathlib.Path, records: dict[str, str], cds: dict[str, str]) -> pathlib.Path:
-    """A GenBank flat file of these records, each coding one with its CDS location."""
+def _genbank(
+    path: pathlib.Path,
+    records: dict[str, str],
+    cds: dict[str, str],
+    *,
+    proteins: dict[str, tuple[str, str]] | None = None,
+    sequences: bool = False,
+) -> pathlib.Path:
+    """A GenBank flat file of these records, each coding one with its CDS location.
+
+    With `proteins` (each coding record's protein id and residues) the CDS carries `/protein_id` and
+    `/translation`, the latter wrapped onto further lines and closed on its last as NCBI writes it; a
+    coding record then has a further feature with a qualifier of its own after the CDS, as NCBI's do.
+    With `sequences` each record has its ORIGIN section, numbered and spaced as NCBI writes it.
+    """
     with gzip.open(path, 'wt', encoding='ascii') as fh:
         for versioned, residues in records.items():
             accession = versioned.split('.')[0]
@@ -260,7 +276,22 @@ def _genbank(path: pathlib.Path, records: dict[str, str], cds: dict[str, str]) -
             fh.write(f'     source          1..{len(residues)}\n')
             if versioned in cds:
                 fh.write(f'     CDS             {cds[versioned]}\n                     /codon_start=1\n')
-            fh.write('ORIGIN\n//\n')
+                if proteins is not None and versioned in proteins:
+                    protein_id, translation = proteins[versioned]
+                    fh.write(f'                     /protein_id="{protein_id}"\n')
+                    pieces = [translation[k : k + 4] for k in range(0, len(translation), 4)]
+                    fh.write(f'                     /translation="{pieces[0]}\n')
+                    for piece in pieces[1:-1]:
+                        fh.write(f'                     {piece}\n')
+                    fh.write(f'                     {pieces[-1]}"\n' if len(pieces) > 1 else '                     "\n')
+                fh.write(f'     polyA_site      {len(residues)}\n')
+                fh.write('                     /note="synthetic, as a feature after the CDS"\n')
+            if sequences:
+                fh.write('ORIGIN\n')
+                for k in range(0, len(residues), 60):
+                    tens = [residues[j : j + 10].lower() for j in range(k, min(k + 60, len(residues)), 10)]
+                    fh.write(f'{k + 1:>9} {" ".join(tens)}\n')
+            fh.write('//\n')
     return path
 
 
@@ -294,6 +325,28 @@ def _tsv(path: pathlib.Path, columns: list[str], rows: list[list[str]], *, gzipp
     return path
 
 
+# Each coding transcript's protein, as the GenBank record's CDS names and translates it.
+RECORD_PROTEINS = {
+    'NM_000010.2': ('NP_000010.1', PROTEINS['NP_000010.1']),
+    'NM_000020.1': ('NP_000020.1', PROTEINS['NP_000020.1']),
+    'NM_000050.1': ('NP_000050.1', PROTEINS['NP_000050.1']),
+    'NM_000060.1': ('NP_000060.1', PROTEINS['NP_000060.1']),
+    'NM_000070.1': ('NP_000070.1', PROTEINS['NP_000070.1']),
+}
+# Entrez's status of each version in the historical set: PLUS replaced, NONC suppressed, the rest live.
+STATUS = [
+    ['NM_000010.2', 'replaced', 'NM_000010.3'],
+    ['NM_000020.1', 'live', ''],
+    ['NR_000030.1', 'suppressed', ''],
+    ['NM_000040.1', 'live', ''],
+    ['NM_000050.1', 'live', ''],
+    ['NM_000060.1', 'live', ''],
+    ['NR_000061.1', 'live', ''],
+    ['NM_000070.1', 'live', ''],
+]
+STATUS_COLUMNS = ['accession_version', 'status', 'replaced_by']
+
+
 def _release(
     tmp_path: pathlib.Path,
     *,
@@ -318,6 +371,33 @@ def _release(
         hgnc=_tsv(tmp_path / 'hgnc.txt', hgnc_columns, [r[: len(hgnc_columns)] for r in HGNC], gzipped=False),
         mane=_tsv(tmp_path / 'mane.txt.gz', ['RefSeq_nuc', 'Ensembl_nuc', 'MANE_status'], MANE, gzipped=True),
         records=_genbank(tmp_path / 'rna.gbff.gz', transcripts, record_cds),
+    )
+
+
+def _historical(
+    tmp_path: pathlib.Path,
+    *,
+    status: list[list[str]] = STATUS,
+    status_columns: list[str] = STATUS_COLUMNS,
+    record_proteins: dict[str, tuple[str, str]] = RECORD_PROTEINS,
+    sequences: bool = True,
+) -> refseq.Release:
+    """The same set as NCBI's historical files: records with sequences and translations, a status table, no FASTA."""
+    tmp_path.mkdir(exist_ok=True)
+    annotation = tmp_path / 'genomic.gff.gz'
+    with gzip.open(annotation, 'wt', encoding='utf-8') as fh:
+        fh.write('\n'.join(GFF) + '\n')
+    return refseq.Release(
+        assembly=bundle_pb2.ASSEMBLY_GRCH38,
+        release='RS_TEST-historical',
+        annotation=annotation,
+        alignments=(_bam(tmp_path / 'alns.bam', READS),),
+        hgnc=_tsv(tmp_path / 'hgnc.txt', HGNC_COLUMNS, HGNC, gzipped=False),
+        mane=_tsv(tmp_path / 'mane.txt.gz', ['RefSeq_nuc', 'Ensembl_nuc', 'MANE_status'], MANE, gzipped=True),
+        records=_genbank(
+            tmp_path / 'rna.gbff.gz', TRANSCRIPTS, RECORD_CDS, proteins=record_proteins, sequences=sequences
+        ),
+        status=_tsv(tmp_path / 'status.tsv', status_columns, [r[: len(status_columns)] for r in status], gzipped=False),
     )
 
 
@@ -944,7 +1024,7 @@ def test_a_frameshifted_cds_wrapped_onto_a_second_line_is_read_whole(tmp_path: p
 
 def test_a_record_stating_two_cds_features_fails_the_build(tmp_path: pathlib.Path) -> None:
     release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..30\n     CDS             7..30'})
-    with pytest.raises(build.BuildError, match=r'NM_000010\.2 states more than one CDS'):
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2 states 2 CDS features, 0 of them naming a protein'):
         list(refseq.bundles(release))
 
 
@@ -1072,3 +1152,219 @@ def test_a_warning_of_another_kind_is_shown_and_the_command_finishes(
     with pytest.warns(RuntimeWarning, match='a library warning'):  # re-shown once the build is over
         cli.main(_refseq_command(_release(tmp_path), tmp_path / 'shards'))
     assert capsys.readouterr().out.strip().endswith('.bagz')  # the command finished and printed its shard
+
+
+# ---- the historical set ---------------------------------------------------------------------------
+
+
+def test_the_historical_set_takes_sequences_and_proteins_from_the_records(tmp_path: pathlib.Path) -> None:
+    bundles = _by_symbol(_historical(tmp_path))
+    transcript = _transcript(bundles['MINUS'], 'NM_000020')
+    sequences = {s.digest: bytes(s.residues) for s in bundles['MINUS'].sequences}
+    assert sequences[transcript.sequence_digest] == TRANSCRIPTS['NM_000020.1'].encode()
+    (protein,) = bundles['MINUS'].proteins
+    assert (protein.accession, protein.version) == ('NP_000020', 1)
+    assert sequences[protein.sequence_digest] == PROTEINS['NP_000020.1'].encode()
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (26, 46)
+
+
+def test_each_version_carries_the_status_entrez_gives_it(tmp_path: pathlib.Path) -> None:
+    rows = [
+        ['NM_000010.2', 'replaced', 'NM_000010.3'],
+        ['NR_000030.1', 'suppressed', ''],
+        *[r for r in STATUS if r[0] not in ('NM_000010.2', 'NR_000030.1')],
+    ]
+    bundles = _by_symbol(_historical(tmp_path, status=rows))
+    assert _transcript(bundles['PLUS'], 'NM_000010').status == bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+    assert _transcript(bundles['NONC'], 'NR_000030').status == bundle_pb2.TRANSCRIPT_STATUS_SUPPRESSED
+    assert _transcript(bundles['MINUS'], 'NM_000020').status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+
+
+def test_a_retired_version_carries_no_tags_and_no_mane_partner(tmp_path: pathlib.Path) -> None:
+    # PLUS is tagged RefSeq Select in the annotation and MANE Select in the summary; replaced, it keeps neither
+    transcript = _transcript(_by_symbol(_historical(tmp_path))['PLUS'], 'NM_000010')
+    assert list(transcript.tags) == []
+    assert transcript.mane_partner == ''
+
+
+def test_a_version_with_no_status_row_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _historical(tmp_path, status=[r for r in STATUS if r[0] != 'NM_000040.1'])
+    with pytest.raises(build.BuildError, match=r'no row in the status table.*NM_000040\.1'):
+        list(refseq.bundles(release))
+
+
+def test_a_status_word_that_is_not_one_of_entrez_s_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _historical(tmp_path, status=[['NM_000010.2', 'retired', ''], *STATUS[1:]])
+    with pytest.raises(build.BuildError, match=r"NM_000010\.2 has status 'retired'"):
+        list(refseq.bundles(release))
+
+
+def test_a_status_table_without_its_columns_fails_the_build(tmp_path: pathlib.Path) -> None:
+    release = _historical(tmp_path, status_columns=['accession_version'])
+    with pytest.raises(build.BuildError, match="'status'"):
+        list(refseq.bundles(release))
+
+
+def test_a_record_without_a_translation_fails_a_build_reading_sequences_from_records(tmp_path: pathlib.Path) -> None:
+    proteins = {k: v for k, v in RECORD_PROTEINS.items() if k != 'NM_000050.1'}
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1 names no protein_id or carries no translation'):
+        list(refseq.bundles(_historical(tmp_path, record_proteins=proteins)))
+
+
+def test_a_record_without_an_origin_fails_a_build_reading_sequences_from_records(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match='no ORIGIN section'):
+        list(refseq.bundles(_historical(tmp_path, sequences=False)))
+
+
+def test_a_release_with_one_sequence_set_is_refused(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match='sequence sets'):
+        dataclasses.replace(_release(tmp_path), proteins=None)
+
+
+def test_a_release_with_a_status_table_beside_its_sequence_sets_is_refused(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match='status table'):
+        dataclasses.replace(_release(tmp_path), status=tmp_path / 'status.tsv')
+
+
+def test_a_historical_shard_under_the_current_one_serves_a_retired_version(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Built by the command and stacked under the current shard, a retired version is served when named only."""
+    historical = _historical(tmp_path / 'historical')
+    cli.main([
+        'historical', '--assembly', 'GRCh38', '--release', 'RS_TEST-historical',
+        '--annotation', str(historical.annotation), '--records', str(historical.records),
+        '--alignments', str(historical.alignments[0]), '--status', str(historical.status),
+        '--hgnc', str(historical.hgnc), '--mane', str(historical.mane), '--shards', str(tmp_path / 'shards'),
+    ])  # fmt: skip
+    historical_shard = capsys.readouterr().out.strip()
+    # the current release no longer carries PLUS's NM_000010.2 or NONC's NR_000030.1
+    retired = ('NM_000010.2', 'NR_000030.1')
+    (tmp_path / 'current').mkdir()
+    current = _release(
+        tmp_path / 'current',
+        gff=[row for row in GFF if not any(r in row for r in retired)],
+        reads=[r for r in READS if r.name not in retired],
+        transcripts={k: v for k, v in TRANSCRIPTS.items() if k not in retired},
+        record_cds={k: v for k, v in RECORD_CDS.items() if k not in retired},
+    )
+    current_shard = store_build.write_shard(
+        refseq.bundles(current), tmp_path / 'shards', release='RS_TEST', inputs=current.inputs()
+    )
+    cli.main(['index', '--assembly', 'GRCh38', '--out', str(tmp_path / 'store'), historical_shard, str(current_shard)])
+    fasta = _fasta(tmp_path / 'genome.fna.gz', GENOME)
+    cli.main(['genome', '--assembly', 'GRCh38', '--fasta', str(fasta), '--out', str(tmp_path / 'genome')])
+    provider = provider_mod.BundleProvider(
+        store_mod.BundleStore(str(tmp_path / 'store')), genome_mod.Genome(str(tmp_path / 'genome'))
+    )
+    assert provider.get_transcript('NM_000010.2', None)['cds_start_index'] == 4
+    ref = _g(CHROM, 105, 105)  # PLUS's c.1
+    assert weaver.parse(f'NM_000010.2:c.1{ref}>{"G" if ref != "G" else "C"}').validate(provider)
+    assert provider.get_transcripts_for_region(CHROM, 100, 230) == []  # PLUS's only transcript is retired
+    assert provider.get_transcripts_for_region(CHROM, 800, 850) == []  # NONC's is suppressed
+    assert provider.get_transcripts_for_region(CHROM, 500, 630) == ['NM_000020.1']
+
+
+def _with_second_cds(tmp_path: pathlib.Path, *, named: bool) -> refseq.Release:
+    """The historical set with a second CDS feature on ALT's record, naming a protein or not."""
+    release = _historical(tmp_path)
+    extra = '     CDS             3..5\n                     /codon_start=1\n'
+    if named:
+        extra += '                     /protein_id="NP_000051.1"\n                     /translation="M"\n'
+    with gzip.open(release.records, 'rt', encoding='ascii') as fh:
+        text = fh.read()
+    marker = 'ORIGIN'
+    head, _, tail = text.partition('VERSION     NM_000050.1\n')
+    tail = tail.replace(marker, extra + marker, 1)
+    with gzip.open(release.records, 'wt', encoding='ascii') as fh:
+        fh.write(head + 'VERSION     NM_000050.1\n' + tail)
+    return release
+
+
+def test_a_record_with_a_second_cds_naming_no_protein_takes_the_one_that_does(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_by_symbol(_with_second_cds(tmp_path, named=False))['ALT'], 'NM_000050')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (2, 7)
+    assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
+
+
+def test_a_record_with_two_cds_features_naming_proteins_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1 states 2 CDS features, 2 of them naming a protein'):
+        list(refseq.bundles(_with_second_cds(tmp_path, named=True)))
+
+
+def _complemented(tmp_path: pathlib.Path, historical: bool) -> refseq.Release:
+    """ALT's record stating its CDS as a `complement` location, in the historical set or in a release."""
+    cds = {**RECORD_CDS, 'NM_000050.1': 'complement(3..8)'}
+    if not historical:
+        return _release(tmp_path, record_cds=cds)
+    release = _historical(tmp_path)
+    _genbank(release.records, TRANSCRIPTS, cds, proteins=RECORD_PROTEINS, sequences=True)
+    return release
+
+
+def test_the_historical_set_leaves_out_a_record_whose_cds_statement_the_reader_refuses(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundles = _by_symbol(_complemented(tmp_path, historical=True))
+    assert 'ALT' not in bundles  # its only transcript is left out, so the gene has no bundle
+    assert 'NM_000040' in [t.accession for t in bundles['PAR'].transcripts]  # the rest are bundled
+    report = capsys.readouterr().err
+    assert 'left out for a CDS statement the reader refuses: 1' in report
+    assert 'NM_000050.1: CDS location' in report
+
+
+def test_a_release_record_whose_cds_statement_the_reader_refuses_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1: CDS location .* is not a range'):
+        list(refseq.bundles(_complemented(tmp_path, historical=False)))
+
+
+def test_two_records_translating_one_protein_version_differently_fail_the_build(tmp_path: pathlib.Path) -> None:
+    # ALT's record names PLUS's protein and translates it to something else
+    proteins = {**RECORD_PROTEINS, 'NM_000050.1': ('NP_000010.1', 'MA')}
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1: translates NP_000010\.1 to other residues'):
+        list(refseq.bundles(_historical(tmp_path, record_proteins=proteins)))
+
+
+def _rewritten_records(release: refseq.Release, edit: Callable[[str], str]) -> refseq.Release:
+    """The release with its GenBank file's text put through `edit`."""
+    with gzip.open(release.records, 'rt', encoding='ascii') as fh:
+        text = fh.read()
+    with gzip.open(release.records, 'wt', encoding='ascii') as fh:
+        fh.write(edit(text))
+    return release
+
+
+def test_a_record_whose_origin_has_only_blank_lines_fails_a_build_reading_sequences(tmp_path: pathlib.Path) -> None:
+    def blank_origin(text: str) -> str:
+        head, _, tail = text.partition('VERSION     NR_000030.1\n')
+        body, _, rest = tail.partition('//\n')
+        return head + 'VERSION     NR_000030.1\n' + body[: body.index('ORIGIN')] + 'ORIGIN\n\n//\n' + rest
+
+    with pytest.raises(build.BuildError, match=r'NR_000030\.1 has no ORIGIN section, or an empty one'):
+        list(refseq.bundles(_rewritten_records(_historical(tmp_path), blank_origin)))
+
+
+def test_a_record_not_closed_before_the_next_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # without its //, NM_000010.2's ORIGIN would swallow the record after it
+    def unclosed(text: str) -> str:
+        head, _, tail = text.partition('VERSION     NM_000010.2\n')
+        return head + 'VERSION     NM_000010.2\n' + tail.replace('//\n', '', 1)
+
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2 is not closed by // before the next record'):
+        list(refseq.bundles(_rewritten_records(_historical(tmp_path), unclosed)))
+
+
+def test_a_file_ending_inside_a_record_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'ends inside the record of NM_000070\.1'):
+        list(refseq.bundles(_rewritten_records(_release(tmp_path), lambda text: text[: text.rindex('//\n')])))
+
+
+def test_the_historical_set_leaves_out_a_record_whose_open_cds_end_is_not_its_last_base(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ALT's record, 10 bases, marks its CDS open at an end two bases short of the record's
+    release = _historical(tmp_path)
+    cds = {**RECORD_CDS, 'NM_000050.1': '3..>8'}
+    _genbank(release.records, TRANSCRIPTS, cds, proteins=RECORD_PROTEINS, sequences=True)
+    assert 'ALT' not in _by_symbol(release)
+    assert 'NM_000050.1: CDS open at its end, which is index 7, not 9' in capsys.readouterr().err
