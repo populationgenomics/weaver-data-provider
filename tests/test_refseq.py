@@ -936,7 +936,25 @@ def test_the_command_reports_each_build_warning_on_a_line(
         cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99)), tmp_path / 'shards'))
     report = capsys.readouterr().err.splitlines()
     assert report[-2].startswith('warning: NM_000060.1: CDS 4..39 taken from its record; the annotation projects 4..38')
-    assert report[-1] == '1 build warnings'
+    assert report[-1] == '1 build warning'
+
+
+def test_a_crashed_build_still_reports_its_warnings(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stands in for a defect or an I/O error during the build, which is not a BuildError
+    write_shard = store_build.write_shard
+
+    def crash(*args: object, **kwargs: object) -> pathlib.Path:
+        write_shard(*args, **kwargs)  # type: ignore[arg-type]
+        raise OSError('disk full')
+
+    monkeypatch.setattr(store_build, 'write_shard', crash)
+    with pytest.raises(OSError, match='disk full'):
+        cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99)), tmp_path / 'shards'))
+    report = capsys.readouterr().err.splitlines()
+    assert report[-2].startswith('warning: NM_000060.1: CDS 4..39 taken from its record')
+    assert report[-1] == '1 build warning'
 
 
 def test_a_failed_build_reports_its_warnings_before_the_failure(
@@ -948,7 +966,7 @@ def test_a_failed_build_reports_its_warnings_before_the_failure(
         cli.main(_refseq_command(_release(tmp_path, gff=_patch_cds_end(99), proteins=proteins), tmp_path / 'shards'))
     report = capsys.readouterr().err.splitlines()
     assert report[-3].startswith('warning: NM_000060.1: CDS 4..39 taken from its record')
-    assert report[-2] == '1 build warnings'
+    assert report[-2] == '1 build warning'
     assert report[-1] == 'FAILED: NM_000070.1: its protein NP_000070.1 is not in the protein set'
 
 

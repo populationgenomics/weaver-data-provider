@@ -86,6 +86,19 @@ def _genome(args: argparse.Namespace) -> None:
     print(f'{args.out}: {len(catalogue.sequences)} sequences', file=sys.stderr)
 
 
+def _report(caught: list[warnings.WarningMessage]) -> None:
+    """Each build warning as one line on stderr, then their count; any other warning as Python shows it."""
+    ours = 0
+    for w in caught:
+        if issubclass(w.category, build.BuildWarning):
+            ours += 1
+            print(f'warning: {w.message}', file=sys.stderr)
+        else:
+            warnings.showwarning(w.message, w.category, w.filename, w.lineno)
+    if ours:
+        print(f'{ours} build warning{"" if ours == 1 else "s"}', file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog='weaver-data-build', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -164,30 +177,20 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     failure: build.BuildError | None = None
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always', build.BuildWarning)
-        try:
-            args.run(args)
-        except build.BuildError as error:
-            failure = error
-    # Reported only once recording has stopped: a warning shown while recording is recorded again.
-    _report(caught)
+    caught: list[warnings.WarningMessage] = []
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', build.BuildWarning)
+            try:
+                args.run(args)
+            except build.BuildError as error:
+                failure = error
+    finally:
+        # Reported only once recording has stopped, a crash included: a warning shown while recording is recorded again.
+        _report(caught)
     if failure is not None:
         print(f'FAILED: {failure}', file=sys.stderr)
         raise SystemExit(1) from failure
-
-
-def _report(caught: list[warnings.WarningMessage]) -> None:
-    """Each build warning as one line on stderr, then their count; any other warning as Python shows it."""
-    ours = 0
-    for w in caught:
-        if issubclass(w.category, build.BuildWarning):
-            ours += 1
-            print(f'warning: {w.message}', file=sys.stderr)
-        else:
-            warnings.showwarning(w.message, w.category, w.filename, w.lineno)
-    if ours:
-        print(f'{ours} build warnings', file=sys.stderr)
 
 
 if __name__ == '__main__':
