@@ -1020,7 +1020,7 @@ def test_a_frameshifted_cds_wrapped_onto_a_second_line_is_read_whole(tmp_path: p
 
 def test_a_record_stating_two_cds_features_fails_the_build(tmp_path: pathlib.Path) -> None:
     release = _release(tmp_path, record_cds={**RECORD_CDS, 'NM_000010.2': '5..30\n     CDS             7..30'})
-    with pytest.raises(build.BuildError, match=r'NM_000010\.2 states more than one CDS'):
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2 states 2 CDS features, 0 of them naming a protein'):
         list(refseq.bundles(release))
 
 
@@ -1252,3 +1252,63 @@ def test_a_historical_shard_under_the_current_one_serves_a_retired_version(
     assert provider.get_transcripts_for_region(CHROM, 100, 230) == []  # PLUS's only transcript is retired
     assert provider.get_transcripts_for_region(CHROM, 800, 850) == []  # NONC's is suppressed
     assert provider.get_transcripts_for_region(CHROM, 500, 630) == ['NM_000020.1']
+
+
+def _with_second_cds(tmp_path: pathlib.Path, *, named: bool) -> refseq.Release:
+    """The historical set with a second CDS feature on ALT's record, naming a protein or not."""
+    release = _historical(tmp_path)
+    extra = '     CDS             3..5\n                     /codon_start=1\n'
+    if named:
+        extra += '                     /protein_id="NP_000051.1"\n                     /translation="M"\n'
+    with gzip.open(release.records, 'rt', encoding='ascii') as fh:
+        text = fh.read()
+    marker = 'ORIGIN'
+    head, _, tail = text.partition('VERSION     NM_000050.1\n')
+    tail = tail.replace(marker, extra + marker, 1)
+    with gzip.open(release.records, 'wt', encoding='ascii') as fh:
+        fh.write(head + 'VERSION     NM_000050.1\n' + tail)
+    return release
+
+
+def test_a_record_with_a_second_cds_naming_no_protein_takes_the_one_that_does(tmp_path: pathlib.Path) -> None:
+    transcript = _transcript(_by_symbol(_with_second_cds(tmp_path, named=False))['ALT'], 'NM_000050')
+    assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (2, 7)
+    assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
+
+
+def test_a_record_with_two_cds_features_naming_proteins_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1 states 2 CDS features, 2 of them naming a protein'):
+        list(refseq.bundles(_with_second_cds(tmp_path, named=True)))
+
+
+def _complemented(tmp_path: pathlib.Path, historical: bool) -> refseq.Release:
+    """ALT's record stating its CDS as a `complement` location, in the historical set or in a release."""
+    cds = {**RECORD_CDS, 'NM_000050.1': 'complement(3..8)'}
+    if not historical:
+        return _release(tmp_path, record_cds=cds)
+    release = _historical(tmp_path)
+    _genbank(release.records, TRANSCRIPTS, cds, proteins=RECORD_PROTEINS, sequences=True)
+    return release
+
+
+def test_the_historical_set_leaves_out_a_record_whose_cds_statement_the_reader_refuses(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundles = _by_symbol(_complemented(tmp_path, historical=True))
+    assert 'ALT' not in bundles  # its only transcript is left out, so the gene has no bundle
+    assert 'NM_000040' in [t.accession for t in bundles['PAR'].transcripts]  # the rest are bundled
+    report = capsys.readouterr().err
+    assert 'left out for a CDS statement the reader refuses: 1' in report
+    assert 'NM_000050.1: CDS location' in report
+
+
+def test_a_release_record_whose_cds_statement_the_reader_refuses_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1: CDS location .* is not a range'):
+        list(refseq.bundles(_complemented(tmp_path, historical=False)))
+
+
+def test_two_records_translating_one_protein_version_differently_fail_the_build(tmp_path: pathlib.Path) -> None:
+    # ALT's record names PLUS's protein and translates it to something else
+    proteins = {**RECORD_PROTEINS, 'NM_000050.1': ('NP_000010.1', 'MA')}
+    with pytest.raises(build.BuildError, match=r'NM_000050\.1: translates NP_000010\.1 to other residues'):
+        list(refseq.bundles(_historical(tmp_path, record_proteins=proteins)))

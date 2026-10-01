@@ -3,12 +3,15 @@
 The inputs are the files NCBI publishes for an annotated assembly — the GFF3 annotation, the
 transcript and protein sequence sets, the transcripts' GenBank records, and its alignments of every
 RefSeq transcript to the assembly — plus HGNC's complete set, for gene identity, and the MANE summary,
-for ranking. NCBI's historical set — every replaced and suppressed `NM_`/`NR_` version with the
-alignment it last had, beside the annotation release it is anchored on — comes as the same GFF3, BAM
-and GenBank files but no sequence sets; the records supply the sequences and the proteins, and a
-table of each version's status in Entrez, which the records do not state, says which are retired. A
-retired version is bundled without tags or a MANE partner, since those name what the publisher
-recommends today.
+for ranking. NCBI's historical set — every `NM_`/`NR_` version it has ever aligned to GRCh38, about
+half of them since replaced or suppressed, each with the alignment it last had — comes as the same
+GFF3, BAM and GenBank files but no sequence sets; the records supply the sequences and the proteins,
+and a table of each version's status in Entrez, which the records cannot state, says which are
+retired. A retired version is bundled without tags or a MANE partner, since those name what the
+publisher recommends today. A few of the set's oldest records state their CDS in a form current
+records never do — a `complement` location, a closed start read from its third base — and are left
+out and counted, where the same in a release fails the build: the set is an archive, and a record
+the reader declines to interpret is better absent than guessed at.
 
 Bundled: every transcript the annotation names with a versioned accession, with each placement NCBI
 publishes for it on any sequence of the assembly, the CDS its GenBank record states, and its protein.
@@ -328,46 +331,67 @@ class _CdsQualifiers:
             self.translation = _quoted(self.version, name, text)
         self._lines = []
 
-    def finish(self) -> tuple[str, bytes] | None:
-        """The protein id and translation, once every qualifier is read; None unless both were stated."""
+    def finish(self) -> None:
+        """Close the last qualifier; called once no further qualifier line can follow."""
         self._close()
+
+    def protein(self) -> tuple[str, bytes] | None:
+        """The protein id and translation, once finished; None unless both were stated."""
         if self.protein_id is None or self.translation is None:
             return None
         return self.protein_id, self.translation.encode('ascii')
 
 
-def _read_records(path: pathlib.Path, *, sequences: bool) -> dict[str, _Record]:
+def _read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str] | None = None) -> dict[str, _Record]:
     """Each GenBank record's CDS in its own coordinates and, when `sequences`, its sequence and protein.
+
+    With `left_out`, a record whose CDS statement the reader refuses — a location of another shape, a
+    closed start read from other than its first base — is left out of the result and noted there by
+    version with the reason, instead of failing the read.
 
     A CDS written as a join — a programmed frameshift, `join(114..317,319..801)` — is taken by its outer
     bounds, the first and last coding bases, which is what c. numbering needs. The sequence is the
     ORIGIN section upper-cased; the protein is the CDS's `/protein_id` with its `/translation`.
 
+    A record with several CDS features — an old record annotating a pseudogene's reading frame beside
+    the protein's — has as its CDS the one that names a protein; several naming one is refused.
+
     Raises:
-        build.BuildError: If a record states more than one CDS, a version appears twice, a CDS or an
-            ORIGIN comes before any VERSION line, a VERSION line has no accession, a location is of a
-            shape `_parse_record_cds` refuses, the file ends inside a location, a CDS with a closed
-            start reads from other than its first base (`/codon_start` 2 or 3), which no start codon
-            can do, or, when read for sequences, a record has no ORIGIN section or an empty one, or a
-            CDS no protein id or translation.
+        build.BuildError: If a record states several CDS features naming a protein, or several and
+            none naming one, a version appears twice, a CDS or an ORIGIN comes before any VERSION
+            line, a VERSION line has no accession, a location is of a shape `_parse_record_cds`
+            refuses, the file ends inside a location, a CDS with a closed start reads from other than
+            its first base (`/codon_start` 2 or 3), which no start codon can do, or, when read for
+            sequences, a record has no ORIGIN section or an empty one, or a CDS no protein id or
+            translation.
     """
     out: dict[str, _Record] = {}
     version: str | None = None
-    record = _Record()
+    features: list[_CdsQualifiers] = []  # the record's CDS features, each with its qualifiers
     qualifiers: _CdsQualifiers | None = None
     origin: list[str] | None = None
+
+    def refuse(error: build.BuildError) -> None:
+        if left_out is None or version is None:
+            raise error
+        left_out[version] = str(error)
+
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         for line in fh:
             if qualifiers is not None and not line.startswith(' ' * 21):
-                record.protein = qualifiers.finish()
+                qualifiers.finish()
                 qualifiers = None
             if qualifiers is not None:
-                qualifiers.add(line)
+                try:
+                    qualifiers.add(line)
+                except build.BuildError as error:
+                    refuse(error)
+                    qualifiers = None
             elif origin is not None and not line.startswith('//'):
                 origin.append(''.join(line.split()[1:]))
             elif line.startswith('LOCUS'):
                 version = None  # a record without a VERSION line must not inherit the previous one's
-                record = _Record()
+                features = []
             elif line.startswith('VERSION'):
                 fields = line.split()
                 if len(fields) < 2:
@@ -384,35 +408,50 @@ def _read_records(path: pathlib.Path, *, sequences: bool) -> dict[str, _Record]:
                     if continued is None:
                         raise build.BuildError(f'{path}: ends inside the CDS location of {version}')
                     location += continued.strip()
-                if record.cds is not None:
-                    raise build.BuildError(f'{path}: {version} states more than one CDS')
-                record.cds = _parse_record_cds(version, location)
-                qualifiers = _CdsQualifiers(version, record.cds)
+                try:
+                    qualifiers = _CdsQualifiers(version, _parse_record_cds(version, location))
+                except build.BuildError as error:
+                    refuse(error)
+                else:
+                    features.append(qualifiers)
             elif line.startswith('ORIGIN') and sequences:
                 if version is None:
                     raise build.BuildError(f'{path}: an ORIGIN in a record with no VERSION line')
                 origin = []
             elif line.startswith('//') and version is not None:
-                if sequences:
-                    _complete(path, version, record, origin)
-                out[version] = record
-                version, record, origin = None, _Record(), None
-    if qualifiers is not None:
-        record.protein = qualifiers.finish()
+                if qualifiers is not None:
+                    qualifiers.finish()
+                    qualifiers = None
+                if left_out is None or version not in left_out:
+                    out[version] = _record(path, version, features, origin if sequences else None, sequences=sequences)
+                version, features, origin = None, [], None
     return out
 
 
-def _complete(path: pathlib.Path, version: str, record: _Record, origin: list[str] | None) -> None:
-    """A record read for its sequences has an ORIGIN and, if coding, a protein id and translation.
+def _record(
+    path: pathlib.Path, version: str, features: list[_CdsQualifiers], origin: list[str] | None, *, sequences: bool
+) -> _Record:
+    """One record from its CDS features and ORIGIN, as `_read_records` documents.
 
     Raises:
-        build.BuildError: If it lacks one.
+        build.BuildError: If the CDS features do not single one out, or, when read for sequences, the
+            record has no ORIGIN section or an empty one, or its CDS no protein id or translation.
     """
+    named = [f for f in features if f.protein_id is not None]
+    if len(named) > 1 or (not named and len(features) > 1):
+        raise build.BuildError(
+            f'{path}: {version} states {len(features)} CDS features, {len(named)} of them naming a protein'
+        )
+    chosen = named[0] if named else features[0] if features else None
+    record = _Record(cds=chosen.cds if chosen is not None else None, protein=chosen.protein() if chosen else None)
+    if not sequences:
+        return record
     if not origin:
         raise build.BuildError(f'{path}: {version} has no ORIGIN section, or an empty one, to read its sequence from')
     record.sequence = ''.join(origin).upper().encode('ascii')
     if record.cds is not None and record.protein is None:
         raise build.BuildError(f'{path}: the CDS of {version} names no protein_id or carries no translation')
+    return record
 
 
 def _read_annotation(path: pathlib.Path) -> _Annotation:
@@ -486,6 +525,7 @@ class _Loaded:
     mane: dict[str, tuple[str, str]]
     records: dict[str, _Record]  # by versioned accession
     status: dict[str, bundle_pb2.TranscriptStatus] | None  # by versioned accession; None for an annotation release
+    left_out: dict[str, str]  # transcripts left out for a CDS statement the reader refuses, with the reason
 
     def status_of(self, versioned: str) -> bundle_pb2.TranscriptStatus:
         """A transcript's status: current in an annotation release, as the table states in the historical set."""
@@ -531,6 +571,9 @@ def _report(release: Release, loaded: _Loaded) -> None:
         and record.cds is not None
         and (kind := common.open_ends(record.cds.start_open, record.cds.end_open)) is not None
     )
+    left_out = ''
+    if loaded.left_out:
+        left_out = f'records left out for a CDS statement the reader refuses: {len(loaded.left_out)}; '
     by_status = ''
     if loaded.status is not None:
         statuses = collections.Counter(
@@ -540,7 +583,7 @@ def _report(release: Release, loaded: _Loaded) -> None:
         )
         by_status = f'by status: {common.counted(statuses)}; '
     print(
-        f'{release.release}: {len(annotation.transcripts)} transcripts, {by_status}'
+        f'{release.release}: {len(annotation.transcripts)} transcripts, {by_status}{left_out}'
         f'placements aligned: {common.counted(by_kind)}; bundled without a placement: {common.counted(unplaced)}; '
         f'coding transcripts whose record leaves a CDS end open: {common.counted(open_cds)}; '
         f'RNA features left out for naming no transcript accession: {common.counted(annotation.without_accession)}',
@@ -549,17 +592,32 @@ def _report(release: Release, loaded: _Loaded) -> None:
 
 
 def _sequence_sets(release: Release, records: dict[str, _Record]) -> tuple[dict[str, bytes], dict[str, bytes]]:
-    """The transcript and protein sequences: the release's FASTA sets, or what the records carry."""
+    """The transcript and protein sequences: the release's FASTA sets, or what the records carry.
+
+    Raises:
+        build.BuildError: If two records translate one protein version to different residues.
+    """
     if release.transcripts is not None and release.proteins is not None:
         return common.read_fasta(release.transcripts), common.read_fasta(release.proteins)
     sequences = {v: r.sequence for v, r in records.items() if r.sequence is not None}
-    proteins = {r.protein[0]: r.protein[1] for r in records.values() if r.protein is not None}
+    proteins: dict[str, bytes] = {}
+    for versioned, record in records.items():
+        if record.protein is None:
+            continue
+        protein_id, residues = record.protein
+        if proteins.setdefault(protein_id, residues) != residues:
+            raise build.BuildError(f'{versioned}: translates {protein_id} to other residues than an earlier record')
     return sequences, proteins
 
 
 def _load(release: Release) -> _Loaded:
     annotation = _read_annotation(release.annotation)
-    records = _read_records(release.records, sequences=release.transcripts is None)
+    left_out: dict[str, str] = {}
+    records = _read_records(
+        release.records, sequences=release.transcripts is None, left_out=left_out if release.historical else None
+    )
+    for versioned in left_out:
+        annotation.transcripts.pop(versioned, None)
     sequences, proteins = _sequence_sets(release, records)
     loaded = _Loaded(
         assembly=release.assembly,
@@ -571,8 +629,12 @@ def _load(release: Release) -> _Loaded:
         mane={row['RefSeq_nuc']: (row['Ensembl_nuc'], row['MANE_status']) for row in common.read_mane(release.mane)},
         records=records,
         status=_read_status(release.status) if release.status is not None else None,
+        left_out=left_out,
     )
     _report(release, loaded)
+    if left_out:
+        shown = ', '.join(f'{v}: {reason}' for v, reason in list(left_out.items())[:5])
+        print(f'{release.release}: records left out, e.g. {shown}', file=sys.stderr)
     return loaded
 
 
