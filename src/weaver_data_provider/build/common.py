@@ -25,15 +25,6 @@ MANE_STATUS_TAGS = {'MANE Select': bundle_pb2.TAG_MANE_SELECT, 'MANE Plus Clinic
 HGNC_COLUMNS = frozenset({'hgnc_id', 'symbol', 'name', 'alias_symbol', 'prev_symbol', 'entrez_id', 'ensembl_gene_id'})
 MANE_COLUMNS = frozenset({'RefSeq_nuc', 'Ensembl_nuc', 'MANE_status'})
 _CIGAR_OPS = {7: '=', 8: 'X', 1: 'I', 2: 'D', 4: 'I'}  # soft-clipped transcript bases have no genome counterpart
-_BASES = 'TCAG'
-_AMINO_ACIDS = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG'
-CODONS = {
-    a + b + c: _AMINO_ACIDS[16 * i + 4 * j + k]
-    for i, a in enumerate(_BASES)
-    for j, b in enumerate(_BASES)
-    for k, c in enumerate(_BASES)
-}
-STOP_CODONS = frozenset(codon for codon, residue in CODONS.items() if residue == '*')
 _COMPLEMENT = bytes.maketrans(b'ACGTN', b'TGCAN')
 _AMBIGUOUS = bytes.maketrans(b'RYKMSWBDHV', b'NNNNNNNNNN')
 

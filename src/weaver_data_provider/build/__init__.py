@@ -21,6 +21,10 @@ class BuildError(RuntimeError):
     """A release this builder refuses to cut, rather than cut wrong."""
 
 
+class BuildWarning(UserWarning):
+    """A release this builder cuts, where its sources disagree and it has taken one over the other."""
+
+
 def validated(message: proto_message.Message, what: str) -> None:
     """Check a record against its proto's constraints before it is written.
 

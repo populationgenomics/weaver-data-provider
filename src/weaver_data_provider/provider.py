@@ -66,13 +66,13 @@ class BundleProvider:
 
         Raises:
             weaver.DataProviderError: If the transcript, or its placement on `reference_ac`, is not in the
-                reference data, or it is coding and no placement states its whole CDS, so that no `c.`
+                reference data, or it is coding and its publisher marks its CDS incomplete, so that no `c.`
                 position on it can be resolved.
         """
         bundle, transcript = self._transcript(transcript_ac)
         if transcript.cds_undetermined:
             raise weaver.DataProviderError(
-                f'{transcript_ac}: coding, but no placement on this assembly states its whole CDS'
+                f'{transcript_ac}: coding, but its CDS is incomplete, so it has no c. numbering'
             )
         alignments = [a for a in transcript.alignments if reference_ac is None or a.chromosome == reference_ac]
         if not alignments:

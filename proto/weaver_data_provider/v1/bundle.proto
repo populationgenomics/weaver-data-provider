@@ -116,10 +116,10 @@ message Transcript {
   // then scaffolds (`NT_`), then patches (`NW_`), each by accession, so the first is the chromosome
   // placement where there is one; the writer refuses any other order.
   repeated Alignment alignments = 12;
-  // A coding transcript whose whole CDS no aligned placement states: a RefSeq record whose coding
-  // sequence runs past what every sequence it is placed on carries, or an Ensembl transcript whose
-  // CDS the annotation leaves incomplete at an end. Its protein is still named. A provider refuses
-  // to model it rather than serve it as non-coding.
+  // A coding transcript whose CDS its publisher marks incomplete at an end, so that it has no c.
+  // numbering: a RefSeq record whose GenBank CDS location is open (`<` or `>`), or an Ensembl
+  // transcript its GTF tags `cds_start_NF` or `cds_end_NF`. Its protein is still named. A provider
+  // refuses to model it rather than serve it as non-coding.
   bool cds_undetermined = 13;
 }
 

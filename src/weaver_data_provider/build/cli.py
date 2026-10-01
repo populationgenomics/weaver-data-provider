@@ -3,7 +3,7 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
     weaver-data-build refseq --assembly GRCh38 --release RS_2024_08 \
         --annotation genomic.gff.gz --transcripts rna.fna.gz --proteins protein.faa.gz \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
-        --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
+        --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --records rna.gbff.gz --shards shards/
     weaver-data-build ensembl --assembly GRCh38 --release 116 \
         --annotation Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gff3.gz \
         --completeness Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gtf.gz \
@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
+import warnings
 
 from weaver_data_provider import build
 from weaver_data_provider.build import ensembl, refseq
@@ -43,6 +44,7 @@ def _refseq(args: argparse.Namespace) -> None:
         alignments=tuple(args.alignments),
         hgnc=args.hgnc,
         mane=args.mane,
+        records=args.records,
     )
     path = store_build.write_shard(
         refseq.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
@@ -105,6 +107,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     cut.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
     cut.add_argument('--mane', type=pathlib.Path, required=True, help='the MANE summary, gzipped TSV')
+    cut.add_argument(
+        '--records', type=pathlib.Path, required=True, help="the transcripts' GenBank records (rna.gbff), gzipped"
+    )
     cut.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
     cut.add_argument(
         '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
@@ -158,11 +163,31 @@ def main(argv: list[str] | None = None) -> None:
     genome.set_defaults(run=_genome)
 
     args = parser.parse_args(argv)
-    try:
-        args.run(args)
-    except build.BuildError as error:
-        print(f'FAILED: {error}', file=sys.stderr)
-        raise SystemExit(1) from error
+    failure: build.BuildError | None = None
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', build.BuildWarning)
+        try:
+            args.run(args)
+        except build.BuildError as error:
+            failure = error
+    # Reported only once recording has stopped: a warning shown while recording is recorded again.
+    _report(caught)
+    if failure is not None:
+        print(f'FAILED: {failure}', file=sys.stderr)
+        raise SystemExit(1) from failure
+
+
+def _report(caught: list[warnings.WarningMessage]) -> None:
+    """Each build warning as one line on stderr, then their count; any other warning as Python shows it."""
+    ours = 0
+    for w in caught:
+        if issubclass(w.category, build.BuildWarning):
+            ours += 1
+            print(f'warning: {w.message}', file=sys.stderr)
+        else:
+            warnings.showwarning(w.message, w.category, w.filename, w.lineno)
+    if ours:
+        print(f'{ours} build warnings', file=sys.stderr)
 
 
 if __name__ == '__main__':
