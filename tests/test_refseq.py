@@ -34,6 +34,7 @@ import gzip
 import pathlib
 import random
 import warnings
+from collections.abc import Callable
 
 import pysam.libcalignedsegment
 import pysam.libcalignmentfile
@@ -262,8 +263,9 @@ def _genbank(
     """A GenBank flat file of these records, each coding one with its CDS location.
 
     With `proteins` (each coding record's protein id and residues) the CDS carries `/protein_id` and
-    `/translation`, the latter wrapped onto further lines as NCBI wraps it; with `sequences` each
-    record has its ORIGIN section, numbered and spaced as NCBI writes it.
+    `/translation`, the latter wrapped onto further lines and closed on its last as NCBI writes it; a
+    coding record then has a further feature with a qualifier of its own after the CDS, as NCBI's do.
+    With `sequences` each record has its ORIGIN section, numbered and spaced as NCBI writes it.
     """
     with gzip.open(path, 'wt', encoding='ascii') as fh:
         for versioned, residues in records.items():
@@ -277,11 +279,13 @@ def _genbank(
                 if proteins is not None and versioned in proteins:
                     protein_id, translation = proteins[versioned]
                     fh.write(f'                     /protein_id="{protein_id}"\n')
-                    first, rest = translation[:4], translation[4:]
-                    fh.write(f'                     /translation="{first}\n')
-                    for k in range(0, len(rest), 4):
-                        fh.write(f'                     {rest[k : k + 4]}\n')
-                    fh.write('                     "\n')
+                    pieces = [translation[k : k + 4] for k in range(0, len(translation), 4)]
+                    fh.write(f'                     /translation="{pieces[0]}\n')
+                    for piece in pieces[1:-1]:
+                        fh.write(f'                     {piece}\n')
+                    fh.write(f'                     {pieces[-1]}"\n' if len(pieces) > 1 else '                     "\n')
+                fh.write(f'     polyA_site      {len(residues)}\n')
+                fh.write('                     /note="synthetic, as a feature after the CDS"\n')
             if sequences:
                 fh.write('ORIGIN\n')
                 for k in range(0, len(residues), 60):
@@ -1165,7 +1169,12 @@ def test_the_historical_set_takes_sequences_and_proteins_from_the_records(tmp_pa
 
 
 def test_each_version_carries_the_status_entrez_gives_it(tmp_path: pathlib.Path) -> None:
-    bundles = _by_symbol(_historical(tmp_path))
+    rows = [
+        ['NM_000010.2', 'replaced', 'NM_000010.3'],
+        ['NR_000030.1', 'suppressed', ''],
+        *[r for r in STATUS if r[0] not in ('NM_000010.2', 'NR_000030.1')],
+    ]
+    bundles = _by_symbol(_historical(tmp_path, status=rows))
     assert _transcript(bundles['PLUS'], 'NM_000010').status == bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
     assert _transcript(bundles['NONC'], 'NR_000030').status == bundle_pb2.TRANSCRIPT_STATUS_SUPPRESSED
     assert _transcript(bundles['MINUS'], 'NM_000020').status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT
@@ -1207,12 +1216,14 @@ def test_a_record_without_an_origin_fails_a_build_reading_sequences_from_records
         list(refseq.bundles(_historical(tmp_path, sequences=False)))
 
 
-def test_a_release_with_one_sequence_set_or_a_status_table_beside_them_is_refused(tmp_path: pathlib.Path) -> None:
-    release = _release(tmp_path)
+def test_a_release_with_one_sequence_set_is_refused(tmp_path: pathlib.Path) -> None:
     with pytest.raises(ValueError, match='sequence sets'):
-        dataclasses.replace(release, proteins=None)
+        dataclasses.replace(_release(tmp_path), proteins=None)
+
+
+def test_a_release_with_a_status_table_beside_its_sequence_sets_is_refused(tmp_path: pathlib.Path) -> None:
     with pytest.raises(ValueError, match='status table'):
-        dataclasses.replace(release, status=tmp_path / 'status.tsv')
+        dataclasses.replace(_release(tmp_path), status=tmp_path / 'status.tsv')
 
 
 def test_a_historical_shard_under_the_current_one_serves_a_retired_version(
@@ -1312,3 +1323,37 @@ def test_two_records_translating_one_protein_version_differently_fail_the_build(
     proteins = {**RECORD_PROTEINS, 'NM_000050.1': ('NP_000010.1', 'MA')}
     with pytest.raises(build.BuildError, match=r'NM_000050\.1: translates NP_000010\.1 to other residues'):
         list(refseq.bundles(_historical(tmp_path, record_proteins=proteins)))
+
+
+def _rewritten_records(release: refseq.Release, edit: Callable[[str], str]) -> refseq.Release:
+    """The release with its GenBank file's text put through `edit`."""
+    with gzip.open(release.records, 'rt', encoding='ascii') as fh:
+        text = fh.read()
+    with gzip.open(release.records, 'wt', encoding='ascii') as fh:
+        fh.write(edit(text))
+    return release
+
+
+def test_a_record_whose_origin_has_only_blank_lines_fails_a_build_reading_sequences(tmp_path: pathlib.Path) -> None:
+    def blank_origin(text: str) -> str:
+        head, _, tail = text.partition('VERSION     NR_000030.1\n')
+        body, _, rest = tail.partition('//\n')
+        return head + 'VERSION     NR_000030.1\n' + body[: body.index('ORIGIN')] + 'ORIGIN\n\n//\n' + rest
+
+    with pytest.raises(build.BuildError, match=r'NR_000030\.1 has no ORIGIN section, or an empty one'):
+        list(refseq.bundles(_rewritten_records(_historical(tmp_path), blank_origin)))
+
+
+def test_a_record_not_closed_before_the_next_fails_the_build(tmp_path: pathlib.Path) -> None:
+    # without its //, NM_000010.2's ORIGIN would swallow the record after it
+    def unclosed(text: str) -> str:
+        head, _, tail = text.partition('VERSION     NM_000010.2\n')
+        return head + 'VERSION     NM_000010.2\n' + tail.replace('//\n', '', 1)
+
+    with pytest.raises(build.BuildError, match=r'NM_000010\.2 is not closed by // before the next record'):
+        list(refseq.bundles(_rewritten_records(_historical(tmp_path), unclosed)))
+
+
+def test_a_file_ending_inside_a_record_fails_the_build(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(build.BuildError, match=r'ends inside the record of NM_000070\.1'):
+        list(refseq.bundles(_rewritten_records(_release(tmp_path), lambda text: text[: text.rindex('//\n')])))

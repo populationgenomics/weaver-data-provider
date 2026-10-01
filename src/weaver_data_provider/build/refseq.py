@@ -301,11 +301,16 @@ def _quoted(version: str, qualifier: str, text: str) -> str:
 
 
 class _CdsQualifiers:
-    """The qualifiers of one record's CDS feature, read a line at a time."""
+    """The qualifiers of one record's CDS feature, read a line at a time.
 
-    def __init__(self, version: str, cds: _RecordCds) -> None:
+    Without `protein`, the translation is not kept: a release build takes its proteins from the protein
+    set, and buffering every translation would hold them all for nothing.
+    """
+
+    def __init__(self, version: str, cds: _RecordCds, *, protein: bool) -> None:
         self.version = version
         self.cds = cds
+        self._protein = protein
         self._lines: list[str] = []
         self.protein_id: str | None = None
         self.translation: str | None = None
@@ -314,7 +319,7 @@ class _CdsQualifiers:
         text = line.strip()
         if text.startswith('/'):
             self._close()
-            self._lines = [text]
+            self._lines = [] if text.startswith('/translation=') and not self._protein else [text]
         elif self._lines:
             self._lines.append(text)
 
@@ -360,10 +365,10 @@ def _read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, st
         build.BuildError: If a record states several CDS features naming a protein, or several and
             none naming one, a version appears twice, a CDS or an ORIGIN comes before any VERSION
             line, a VERSION line has no accession, a location is of a shape `_parse_record_cds`
-            refuses, the file ends inside a location, a CDS with a closed start reads from other than
-            its first base (`/codon_start` 2 or 3), which no start codon can do, or, when read for
-            sequences, a record has no ORIGIN section or an empty one, or a CDS no protein id or
-            translation.
+            refuses, a record is not closed by `//` before the next or before the file ends, a CDS
+            with a closed start reads from other than its first base (`/codon_start` 2 or 3), which
+            no start codon can do, or, when read for sequences, a record has no ORIGIN section or an
+            empty one, or a CDS no protein id or translation.
     """
     out: dict[str, _Record] = {}
     version: str | None = None
@@ -387,11 +392,12 @@ def _read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, st
                 except build.BuildError as error:
                     refuse(error)
                     qualifiers = None
+            elif line.startswith('LOCUS'):
+                if version is not None:
+                    raise build.BuildError(f'{path}: {version} is not closed by // before the next record')
+                features = []
             elif origin is not None and not line.startswith('//'):
                 origin.append(''.join(line.split()[1:]))
-            elif line.startswith('LOCUS'):
-                version = None  # a record without a VERSION line must not inherit the previous one's
-                features = []
             elif line.startswith('VERSION'):
                 fields = line.split()
                 if len(fields) < 2:
@@ -409,7 +415,7 @@ def _read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, st
                         raise build.BuildError(f'{path}: ends inside the CDS location of {version}')
                     location += continued.strip()
                 try:
-                    qualifiers = _CdsQualifiers(version, _parse_record_cds(version, location))
+                    qualifiers = _CdsQualifiers(version, _parse_record_cds(version, location), protein=sequences)
                 except build.BuildError as error:
                     refuse(error)
                 else:
@@ -425,6 +431,8 @@ def _read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, st
                 if left_out is None or version not in left_out:
                     out[version] = _record(path, version, features, origin if sequences else None, sequences=sequences)
                 version, features, origin = None, [], None
+    if version is not None:
+        raise build.BuildError(f'{path}: ends inside the record of {version}, before its //')
     return out
 
 
@@ -446,9 +454,10 @@ def _record(
     record = _Record(cds=chosen.cds if chosen is not None else None, protein=chosen.protein() if chosen else None)
     if not sequences:
         return record
-    if not origin:
+    residues = ''.join(origin or ()).upper().encode('ascii')
+    if not residues:
         raise build.BuildError(f'{path}: {version} has no ORIGIN section, or an empty one, to read its sequence from')
-    record.sequence = ''.join(origin).upper().encode('ascii')
+    record.sequence = residues
     if record.cds is not None and record.protein is None:
         raise build.BuildError(f'{path}: the CDS of {version} names no protein_id or carries no translation')
     return record
