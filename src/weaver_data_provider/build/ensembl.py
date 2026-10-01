@@ -20,8 +20,8 @@ the annotation declares no region for, a sequence with no RefSeq accession among
 feature id or GTF row that repeats, a coding transcript with no sequence or one the GTF does not name,
 a partner NCBI aligned with another sequence than this record, without a sequence, on a chromosome
 the genome lacks or in a way that does not describe the record against the genome, and a protein
-missing from the peptide set. A transcript whose CDS the GTF marks incomplete at either end is
-bundled with `cds_undetermined` set. The reasons are in `docs/design/placements.md`.
+missing from the peptide set. An end of a CDS the GTF tags not found is bundled as open, so that no
+position is numbered from it. The reasons are in `docs/design/placements.md`.
 """
 
 from __future__ import annotations
@@ -197,8 +197,8 @@ def _read_annotation(path: pathlib.Path) -> _Annotation:
     return annotation
 
 
-def _read_completeness(path: pathlib.Path) -> dict[str, bool]:
-    """Whether each transcript's CDS is whole, from the GTF's `cds_start_NF` and `cds_end_NF` tags.
+def _read_completeness(path: pathlib.Path) -> dict[str, tuple[bool, bool]]:
+    """Whether each end of each transcript's CDS is open, from the GTF's `cds_start_NF` and `cds_end_NF` tags.
 
     The GFF3 states a CDS's coordinates and phase but not whether the annotation reaches its real start
     or end; the GTF for the same release carries that as tags on the transcript row.
@@ -206,7 +206,7 @@ def _read_completeness(path: pathlib.Path) -> dict[str, bool]:
     Raises:
         build.BuildError: If a transcript has two rows.
     """
-    whole: dict[str, bool] = {}
+    open_ends: dict[str, tuple[bool, bool]] = {}
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         for line in fh:
             if line.startswith('#'):
@@ -218,10 +218,10 @@ def _read_completeness(path: pathlib.Path) -> dict[str, bool]:
             for key, value in _GTF_ATTRIBUTE.findall(fields[8]):
                 attrs[key].append(value)
             versioned = f'{attrs["transcript_id"][0]}.{attrs["transcript_version"][0]}'
-            if versioned in whole:
+            if versioned in open_ends:
                 raise build.BuildError(f'{path}: {versioned} has two transcript rows')
-            whole[versioned] = not ({'cds_start_NF', 'cds_end_NF'} & set(attrs['tag']))
-    return whole
+            open_ends[versioned] = ('cds_start_NF' in attrs['tag'], 'cds_end_NF' in attrs['tag'])
+    return open_ends
 
 
 def _placement(transcript: _Transcript, sequence: str) -> common.Placement:
@@ -291,7 +291,7 @@ class _Loaded:
     sequences: dict[str, bytes]  # transcript records by versioned accession
     proteins: dict[str, bytes]
     genome: genome_mod.Genome
-    whole_cds: dict[str, bool]  # by versioned accession, from the GTF
+    open_cds: dict[str, tuple[bool, bool]]  # (start, end) open, by versioned accession, from the GTF
     hgnc: dict[str, list[dict[str, str]]]  # by Ensembl gene id
     mane: dict[str, tuple[str, str]]  # Ensembl accession.version -> (RefSeq partner accession.version, MANE status)
     partner_placements: dict[str, list[common.Placement]]  # NCBI's chromosome alignments of each MANE partner
@@ -326,7 +326,7 @@ def _load(release: Release) -> _Loaded:
         sequences=sequences,
         proteins=common.read_fasta(release.proteins),
         genome=genome,
-        whole_cds=_read_completeness(release.completeness),
+        open_cds=_read_completeness(release.completeness),
         hgnc=common.read_hgnc(release.hgnc, 'ensembl_gene_id'),
         mane=mane,
         partner_placements=dict(partner_placements),
@@ -354,7 +354,7 @@ def _check_transcripts(loaded: _Loaded) -> None:
             loaded.off_assembly[accession] += 1
         if transcript.cds and transcript.versioned not in loaded.sequences:
             raise build.BuildError(f'{transcript.versioned}: a coding transcript with no sequence in the sequence sets')
-        if transcript.cds and transcript.versioned not in loaded.whole_cds:
+        if transcript.cds and transcript.versioned not in loaded.open_cds:
             raise build.BuildError(f'{transcript.versioned}: not in the GTF, which says whether its CDS is complete')
 
 
@@ -363,7 +363,8 @@ def _report(release: Release, loaded: _Loaded, tally: _Tally) -> None:
         f'{release.release}: {len(loaded.annotation.transcripts)} transcripts, placements: '
         f'{common.counted(tally.placed)}; MANE partner alignments copied: {tally.copied}; MANE transcripts on no '
         f'chromosome whose partner NCBI aligns to none either: {tally.unpartnered}; coding transcripts whose CDS the '
-        f'GTF marks incomplete: {tally.undetermined}; transcripts left out for having no published sequence: '
+        f'GTF leaves an end open: {common.counted(tally.open_cds)}; '
+        f'transcripts left out for having no published sequence: '
         f'{common.counted(loaded.without_sequence)}; left out for being on a sequence the assembly no longer holds: '
         f'{common.counted(loaded.off_assembly)}',
         file=sys.stderr,
@@ -375,7 +376,7 @@ class _Tally:
     placed: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
     copied: int = 0
     unpartnered: int = 0  # MANE transcripts on no chromosome whose partner NCBI aligns to no chromosome
-    undetermined: int = 0
+    open_cds: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
 
 
 def _own_placement(transcript: _Transcript, residues: bytes, loaded: _Loaded) -> common.Placement:
@@ -466,11 +467,10 @@ def _add_transcript(
     message.alignments.extend(alignments)
     tally.placed.update(common.sequence_kind(a.chromosome) for a in alignments)
     if transcript.cds:
-        if loaded.whole_cds[transcript.versioned]:
-            message.cds.start_index, message.cds.end_index_inclusive = _cds_indices(transcript, own)
-        else:
-            message.cds_undetermined = True
-            tally.undetermined += 1
+        message.cds.start_index, message.cds.end_index_inclusive = _cds_indices(transcript, own)
+        message.cds.start_open, message.cds.end_open = loaded.open_cds[transcript.versioned]
+        if (kind := common.open_ends(message.cds.start_open, message.cds.end_open)) is not None:
+            tally.open_cds[kind] += 1
     if transcript.protein is not None:
         accession, version = transcript.protein
         protein = loaded.proteins.get(f'{accession}.{version}')

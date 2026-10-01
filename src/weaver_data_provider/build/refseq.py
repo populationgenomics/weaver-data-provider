@@ -9,13 +9,13 @@ Bundled: every transcript the annotation names with a versioned accession, with 
 publishes for it on any sequence of the assembly, the CDS its GenBank record states, and its protein.
 The annotation states the CDS again on each placement, in that sequence's coordinates; each placement
 that states it whole is projected through its alignment as a cross-check, and one that lands elsewhere
-is a `build.BuildWarning` naming both. A record that marks its CDS incomplete is bundled with
-`cds_undetermined` set. Left out, and counted by kind in the build's report: RNA features naming no
-transcript accession. Refused, so that no bundle carries a placement or a CDS the builder made up: a
-coding transcript with no alignment, one the annotation gives a CDS and its record none, an alignment
-that does not tile its record or lies outside the annotation's span, a record CDS outside its
-sequence, and an annotation or record file whose shape breaks what this reader relies on. The reasons
-are in `docs/design/placements.md`.
+is a `build.BuildWarning` naming both. An end of the CDS the record marks open — `<` or `>`, the CDS
+running off the record — is bundled as open, so that no position is numbered from it. Left out, and
+counted by kind in the build's report: RNA features naming no transcript accession. Refused, so that no
+bundle carries a placement or a CDS the builder made up: a coding transcript with no alignment, one the
+annotation gives a CDS and its record none, an alignment that does not tile its record or lies outside
+the annotation's span, a record CDS outside its sequence, and an annotation or record file whose shape
+breaks what this reader relies on. The reasons are in `docs/design/placements.md`.
 """
 
 from __future__ import annotations
@@ -207,11 +207,12 @@ class _Annotation:
 
 @dataclasses.dataclass(frozen=True)
 class _RecordCds:
-    """A GenBank record's CDS, 0-based and inclusive, and whether the record marks it incomplete (`<` or `>`)."""
+    """A GenBank record's CDS, 0-based and inclusive, and whether each end runs off the record (`<`, `>`)."""
 
     start: int
     end: int
-    partial: bool
+    start_open: bool
+    end_open: bool
 
 
 def _parse_record_cds(version: str, location: str) -> _RecordCds:
@@ -229,7 +230,7 @@ def _parse_record_cds(version: str, location: str) -> _RecordCds:
         raise build.BuildError(f'{version}: CDS location {location!r} does not run forward')
     if '<' in location.partition(',')[2] or '>' in location.rpartition(',')[0]:
         raise build.BuildError(f'{version}: CDS location {location!r} is open at an inner bound')
-    return _RecordCds(ranges[0][0] - 1, ranges[-1][1] - 1, partial='<' in location or '>' in location)
+    return _RecordCds(ranges[0][0] - 1, ranges[-1][1] - 1, start_open='<' in location, end_open='>' in location)
 
 
 def _read_record_cds(path: pathlib.Path) -> dict[str, _RecordCds]:
@@ -348,11 +349,15 @@ def _report(release: Release, loaded: _Loaded) -> None:
         aligned[versioned].append(chromosome)
     unplaced = collections.Counter(r.biotype for t, r in annotation.transcripts.items() if t not in aligned)
     by_kind = collections.Counter(common.sequence_kind(chromosome) for _, chromosome in loaded.placements)
-    undetermined = sum(1 for t in annotation.transcripts if t in loaded.record_cds and loaded.record_cds[t].partial)
+    open_cds = collections.Counter(
+        kind
+        for t, cds in loaded.record_cds.items()
+        if t in annotation.transcripts and (kind := common.open_ends(cds.start_open, cds.end_open)) is not None
+    )
     print(
         f'{release.release}: {len(annotation.transcripts)} transcripts, '
         f'placements aligned: {common.counted(by_kind)}; bundled without a placement: {common.counted(unplaced)}; '
-        f'coding transcripts whose record marks the CDS incomplete: {undetermined}; '
+        f'coding transcripts whose record leaves a CDS end open: {common.counted(open_cds)}; '
         f'RNA features left out for naming no transcript accession: {common.counted(annotation.without_accession)}',
         file=sys.stderr,
     )
@@ -492,11 +497,9 @@ def _add_transcript(
             raise build.BuildError(
                 f'{versioned}: its record states a CDS {stated.start}..{stated.end} outside its sequence'
             )
-        if stated.partial:
-            transcript.cds_undetermined = True
-        else:
-            transcript.cds.start_index, transcript.cds.end_index_inclusive = stated.start, stated.end
-            _cross_check(versioned, record, aligned, stated)
+        transcript.cds.start_index, transcript.cds.end_index_inclusive = stated.start, stated.end
+        transcript.cds.start_open, transcript.cds.end_open = stated.start_open, stated.end_open
+        _cross_check(versioned, record, aligned, stated)
     if record.protein is not None:
         transcript.protein_accession, transcript.protein_version = record.protein
     _add_protein(bundle, digests, record, loaded)

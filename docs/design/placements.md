@@ -10,10 +10,10 @@ An assembly is not one sequence per chromosome. GRCh38.p14 has 24 chromosomes, a
 every one of those placements, ordered so that a caller who names no sequence gets the chromosome. A RefSeq transcript's
 CDS is the one its GenBank record states, in the transcript's own coordinates, so it does not depend on how well any
 sequence of the assembly carries the transcript; each placement that states the CDS whole is a cross-check, and a
-disagreement is a build warning. A transcript whose publisher marks its CDS incomplete is marked so, and the provider
-refuses to model it rather than serve it as non-coding. A gene's features across sequences are one bundle, joined by
-GeneID. An Ensembl transcript is the genome spliced at its exons, so its placement is the annotation's coordinates,
-checked against the genome; a MANE transcript on a fix patch also gets its RefSeq partner's alignment to the chromosome.
+disagreement is a build warning. An end of the CDS that its publisher marks as running off the transcript is stored as
+open, and weaver numbers no position from it. A gene's features across sequences are one bundle, joined by GeneID. An
+Ensembl transcript is the genome spliced at its exons, so its placement is the annotation's coordinates, checked against
+the genome; a MANE transcript on a fix patch also gets its RefSeq partner's alignment to the chromosome.
 
 The reason is the third principle in [`PRODUCT.md`](../PRODUCT.md): an answer or an error, never a guess. A gene the
 primary assembly's haplotype lacks has no chromosome position, and the honest answer to "where is this variant on
@@ -91,11 +91,15 @@ The record is a required input, and the build fails where it is silent or incons
 calls coding whose record states no CDS, a record CDS outside the record's sequence, two CDSs in one record. A coding
 transcript with no alignment fails the build too, since a bundle that cannot place it is a missing input.
 
-A record whose CDS has an open bound — the 26 computed models above — is bundled with its sequence, protein and
-alignments, no CDS, and `cds_undetermined` set. The provider refuses to model such a transcript, naming the reason,
-since serving it with no CDS would make weaver read every `c.` name on it as non-coding: a wrong answer rather than a
-missing one. The refusal is a change an older reader could not know to make, so it comes with a new format version,
-which the genome catalogue shares: a genome in a bucket is rebuilt with its store although its layout did not change.
+A record whose CDS has an open bound — the 26 computed models above — keeps the CDS it states, with that end marked
+open; the index there is the first or last coding base the record carries. Which positions an open end leaves defined
+follows from where HGVS anchors them: `c.N` and `c.-N` count from the start codon, `c.*N` from the stop codon. So a
+3'-open CDS still numbers everything up to its last coding base, and a 5'-open one its 3' UTR, and each loses the
+positions, and the protein consequences, that depend on the end it lacks. weaver makes that call: the provider passes
+both flags on, and weaver refuses a position whose anchor is open. The alternative states were both wrong: served as
+whole, the CDS numbers from a codon the record lacks; served as non-coding, every `c.` name on it reads as non-coding.
+An older reader would ignore the flags and do the first, so they come with a new format version, which the genome
+catalogue shares: a genome in a bucket is rebuilt with its store although its layout did not change.
 
 ### An Ensembl placement is the annotation's coordinates, checked
 
@@ -124,8 +128,8 @@ Whether a CDS is complete is a fact Ensembl publishes only in its GTF, as the `c
 GFF3 the builder reads for structure has coordinates and phase but no such statement, and phase cannot stand in for one,
 because a 5'-truncated CDS whose missing part is a whole number of codons has phase zero on its first row — about 5,000
 of release 116's 13,000 start-not-found CDSs do. So the GTF is an input, a coding transcript it does not name fails the
-build, and a CDS it tags at either end is `cds_undetermined`, the same state as a RefSeq record whose CDS location is
-open, refused by the provider the same way. About one coding transcript in twelve on release 116 is such a fragment.
+build, and an end it tags not found is open, as a RefSeq record's `<` or `>` is. About one coding transcript in twelve
+on release 116 is such a fragment, and more of them are open at the 3' end than at the 5'.
 
 A gene Ensembl gives no name and HGNC does not know — tens of thousands of non-coding genes — is named by its stable id,
 so the symbol index answers `ENSG…` for them. The transcript's `biotype` is Ensembl's own classification
@@ -157,11 +161,13 @@ chromosome, a patch and an alternate locus share. A feature without one fails th
 
 - **Fail the build on a coding transcript whose CDS is incomplete.** The principled default for a missing input, and
   what a coding transcript with no alignment gets. Rejected because 26 records would refuse the whole release, and the
-  state is a fact about the publisher's data, not a broken input; making it representable and refusing at the provider
-  keeps both the build and the honesty.
+  state is a fact about the publisher's data, not a broken input.
 
-- **Serve such a transcript as non-coding.** Rejected: a wrong answer, indistinguishable at rest from a non-coding
-  transcript.
+- **Mark the whole transcript undetermined and refuse it.** Honest, and loses every position an open end leaves defined:
+  on Ensembl 116, most incomplete CDSs are open only at the 3' end, and number every coding base they carry.
+
+- **Store a frame offset for a 5'-open CDS**, whose first base can fall mid-codon. Nothing reads it: no `c.` position
+  needs it, and weaver predicts no protein consequence on a CDS whose start is unknown.
 
 - **Derive the CDS from the protein**, as the open reading frame whose translation is the protein. A derivation, with
   its own edge cases (selenoproteins, non-AUG initiators, ribosomal slippage), which the first principle rules out where
@@ -193,8 +199,6 @@ chromosome, a patch and an alternate locus share. A feature without one fails th
   placements exist. weaver's `TranscriptData` has no field for it today.
 - Whether a non-MANE Ensembl transcript on a fix patch should get a chromosome placement too. Nothing published aligns
   it there; computing one would be the builder's placement, which the first principle rules out.
-- A region query lists a transcript with an undetermined CDS among its answers, and a caller that then models each one
-  meets the refusal for it. Whether the listing should say so first is open.
 - A joined CDS is stored by its outer bounds, which numbers its `c.` positions as the record does, but a `p.`
   consequence read by translating the CDS in one frame is wrong past the frameshift. Whether the bundle should carry the
   join, or the provider refuse `p.` on such a transcript, is open; ten records on RS_2025_08 have one.

@@ -107,8 +107,7 @@ message Transcript {
   }];
   // Resolves in GeneBundle.sequences; a digest in any other spelling would join nothing.
   string sequence_digest = 7 [(buf.validate.field).string.pattern = "^SQ\\.[A-Za-z0-9_-]{32}$"];
-  // Absent for a non-coding transcript, and for a coding one with `cds_undetermined` set.
-  Cds cds = 8;
+  Cds cds = 8; // absent for a non-coding transcript
   string protein_accession = 9;
   uint32 protein_version = 10;
   string mane_partner = 11; // the other publisher's accession.version in the same MANE pair
@@ -116,15 +115,13 @@ message Transcript {
   // then scaffolds (`NT_`), then patches (`NW_`), each by accession, so the first is the chromosome
   // placement where there is one; the writer refuses any other order.
   repeated Alignment alignments = 12;
-  // A coding transcript whose CDS its publisher marks incomplete at an end, so that it has no c.
-  // numbering: a RefSeq record whose GenBank CDS location is open (`<` or `>`), or an Ensembl
-  // transcript its GTF tags `cds_start_NF` or `cds_end_NF`. Its protein is still named. A provider
-  // refuses to model it rather than serve it as non-coding.
-  bool cds_undetermined = 13;
 }
 
 // The coding sequence as 0-based transcript indices, both inclusive: `start_index` is the first
-// base of the start codon and `end_index_inclusive` the last base of the termination codon.
+// base of the start codon and `end_index_inclusive` the last base of the termination codon, except
+// at an end the publisher marks open — a RefSeq GenBank location's `<` or `>`, Ensembl's
+// `cds_start_NF` or `cds_end_NF` — where the CDS runs off the record and the index is the first or
+// last coding base the record carries. No position is numbered from an open end.
 message Cds {
   option (buf.validate.message).cel = {
     id: "cds.bounds"
@@ -133,6 +130,8 @@ message Cds {
   };
   uint32 start_index = 1;
   uint32 end_index_inclusive = 2;
+  bool start_open = 3; // the record lacks the start codon
+  bool end_open = 4; // the record lacks the termination codon
 }
 
 message Alignment {

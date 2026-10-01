@@ -368,7 +368,8 @@ def test_a_plus_strand_cds_is_the_annotations_bounds_as_transcript_indices(tmp_p
     (transcript,) = _by_symbol(_release(tmp_path))['PLUSE'].transcripts
     # genome 104 is exon 1's fourth base; genome 207 is exon 2's seventh, after exon 1's 20
     assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (3, 26)
-    assert not transcript.cds_undetermined
+    assert not transcript.cds.start_open
+    assert not transcript.cds.end_open
 
 
 def test_a_minus_strand_transcript_runs_5_to_3_down_the_genome(tmp_path: pathlib.Path) -> None:
@@ -421,10 +422,9 @@ def test_a_noncoding_transcript_comes_from_the_ncrna_set(tmp_path: pathlib.Path)
     assert _residues(bundle, transcript.sequence_digest) == NCRNA['ENST00000000030.1'].encode()
 
 
-def test_a_noncoding_transcript_has_no_cds_and_is_not_undetermined(tmp_path: pathlib.Path) -> None:
+def test_a_noncoding_transcript_has_no_cds(tmp_path: pathlib.Path) -> None:
     (transcript,) = _by_symbol(_release(tmp_path))['ENSG00000000030'].transcripts
     assert not transcript.HasField('cds')
-    assert not transcript.cds_undetermined
 
 
 def test_the_biotype_is_ensembls_not_the_feature_type(tmp_path: pathlib.Path) -> None:
@@ -445,10 +445,22 @@ def test_hgnc_names_a_gene_by_its_ensembl_id(tmp_path: pathlib.Path) -> None:
     assert list(gene.previous_symbols) == ['OLDPLUS']
 
 
-def test_a_cds_the_gtf_tags_as_start_not_found_is_undetermined(tmp_path: pathlib.Path) -> None:
-    (transcript,) = _by_symbol(_release(tmp_path))['INCOMPLETE'].transcripts
-    assert transcript.cds_undetermined
-    assert not transcript.HasField('cds')
+@pytest.mark.parametrize(
+    ('tags', 'open_ends'),
+    [
+        (('cds_start_NF',), (True, False)),
+        (('cds_end_NF',), (False, True)),
+        (('cds_start_NF', 'cds_end_NF'), (True, True)),
+    ],
+    ids=['start not found', 'end not found', 'neither found'],
+)
+def test_a_cds_end_the_gtf_tags_not_found_is_open(
+    tmp_path: pathlib.Path, tags: tuple[str, ...], open_ends: tuple[bool, bool]
+) -> None:
+    gtf = [_gtf_row('ENST00000000040', '1', *tags) if 'ENST00000000040' in line else line for line in GTF]
+    (transcript,) = _by_symbol(_release(tmp_path, gtf=gtf))['INCOMPLETE'].transcripts
+    cds = transcript.cds
+    assert (cds.start_index, cds.end_index_inclusive, cds.start_open, cds.end_open) == (0, 29, *open_ends)
     assert (transcript.protein_accession, transcript.protein_version) == ('ENSP00000000040', 1)
 
 

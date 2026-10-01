@@ -112,7 +112,7 @@ class Gene(_message.Message):
     def __init__(self, symbol: _Optional[str] = ..., hgnc_id: _Optional[str] = ..., ncbi_gene_id: _Optional[str] = ..., ensembl_gene_id: _Optional[str] = ..., previous_symbols: _Optional[_Iterable[str]] = ..., alias_symbols: _Optional[_Iterable[str]] = ..., name: _Optional[str] = ...) -> None: ...
 
 class Transcript(_message.Message):
-    __slots__ = ("accession", "version", "publisher", "status", "biotype", "tags", "sequence_digest", "cds", "protein_accession", "protein_version", "mane_partner", "alignments", "cds_undetermined")
+    __slots__ = ("accession", "version", "publisher", "status", "biotype", "tags", "sequence_digest", "cds", "protein_accession", "protein_version", "mane_partner", "alignments")
     ACCESSION_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     PUBLISHER_FIELD_NUMBER: _ClassVar[int]
@@ -125,7 +125,6 @@ class Transcript(_message.Message):
     PROTEIN_VERSION_FIELD_NUMBER: _ClassVar[int]
     MANE_PARTNER_FIELD_NUMBER: _ClassVar[int]
     ALIGNMENTS_FIELD_NUMBER: _ClassVar[int]
-    CDS_UNDETERMINED_FIELD_NUMBER: _ClassVar[int]
     accession: str
     version: int
     publisher: Publisher
@@ -138,16 +137,19 @@ class Transcript(_message.Message):
     protein_version: int
     mane_partner: str
     alignments: _containers.RepeatedCompositeFieldContainer[Alignment]
-    cds_undetermined: bool
-    def __init__(self, accession: _Optional[str] = ..., version: _Optional[int] = ..., publisher: _Optional[_Union[Publisher, str]] = ..., status: _Optional[_Union[TranscriptStatus, str]] = ..., biotype: _Optional[str] = ..., tags: _Optional[_Iterable[_Union[Tag, str]]] = ..., sequence_digest: _Optional[str] = ..., cds: _Optional[_Union[Cds, _Mapping]] = ..., protein_accession: _Optional[str] = ..., protein_version: _Optional[int] = ..., mane_partner: _Optional[str] = ..., alignments: _Optional[_Iterable[_Union[Alignment, _Mapping]]] = ..., cds_undetermined: _Optional[bool] = ...) -> None: ...
+    def __init__(self, accession: _Optional[str] = ..., version: _Optional[int] = ..., publisher: _Optional[_Union[Publisher, str]] = ..., status: _Optional[_Union[TranscriptStatus, str]] = ..., biotype: _Optional[str] = ..., tags: _Optional[_Iterable[_Union[Tag, str]]] = ..., sequence_digest: _Optional[str] = ..., cds: _Optional[_Union[Cds, _Mapping]] = ..., protein_accession: _Optional[str] = ..., protein_version: _Optional[int] = ..., mane_partner: _Optional[str] = ..., alignments: _Optional[_Iterable[_Union[Alignment, _Mapping]]] = ...) -> None: ...
 
 class Cds(_message.Message):
-    __slots__ = ("start_index", "end_index_inclusive")
+    __slots__ = ("start_index", "end_index_inclusive", "start_open", "end_open")
     START_INDEX_FIELD_NUMBER: _ClassVar[int]
     END_INDEX_INCLUSIVE_FIELD_NUMBER: _ClassVar[int]
+    START_OPEN_FIELD_NUMBER: _ClassVar[int]
+    END_OPEN_FIELD_NUMBER: _ClassVar[int]
     start_index: int
     end_index_inclusive: int
-    def __init__(self, start_index: _Optional[int] = ..., end_index_inclusive: _Optional[int] = ...) -> None: ...
+    start_open: bool
+    end_open: bool
+    def __init__(self, start_index: _Optional[int] = ..., end_index_inclusive: _Optional[int] = ..., start_open: _Optional[bool] = ..., end_open: _Optional[bool] = ...) -> None: ...
 
 class Alignment(_message.Message):
     __slots__ = ("assembly", "chromosome", "strand", "source", "exons")

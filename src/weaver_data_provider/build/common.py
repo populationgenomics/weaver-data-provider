@@ -193,6 +193,11 @@ def counted(counts: collections.Counter[str]) -> str:
     return f'{counts.total()} (' + ', '.join(f'{kind} {n}' for kind, n in counts.most_common()) + ')'
 
 
+def open_ends(start_open: bool, end_open: bool) -> str | None:
+    """Which ends of a CDS run off its record, as the build's report counts them; None for neither."""
+    return {(True, False): "5'", (False, True): "3'", (True, True): 'both'}.get((start_open, end_open))
+
+
 # ---- alignments ------------------------------------------------------------------------------------
 
 

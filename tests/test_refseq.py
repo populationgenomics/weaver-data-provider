@@ -493,7 +493,8 @@ def test_the_records_cds_stands_where_no_aligned_placement_states_it_whole(tmp_p
     reads = [r for r in READS if not (r.name == 'NM_000070.1' and r.chrom == PATCH2)]
     transcript = _transcript(_by_symbol(_release(tmp_path, reads=reads))['CLIPPED'], 'NM_000070')
     assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (0, 24)
-    assert not transcript.cds_undetermined
+    assert not transcript.cds.start_open
+    assert not transcript.cds.end_open
 
 
 def test_a_cds_starting_in_bases_a_placement_lacks_is_the_records(tmp_path: pathlib.Path) -> None:
@@ -549,25 +550,31 @@ def test_a_minus_strand_cds_open_at_its_high_genome_end_is_not_checked(tmp_path:
     assert (transcript.cds.start_index, transcript.cds.end_index_inclusive) == (26, 46)
 
 
-@pytest.mark.parametrize('location', ['<3..8', '3..>8', '<3..>8'], ids=['open start', 'open end', 'open both'])
-def test_a_record_marking_its_cds_incomplete_leaves_it_undetermined(tmp_path: pathlib.Path, location: str) -> None:
+@pytest.mark.parametrize(
+    ('location', 'open_ends'),
+    [('<3..8', (True, False)), ('3..>8', (False, True)), ('<3..>8', (True, True))],
+    ids=['open start', 'open end', 'open both'],
+)
+def test_a_record_cds_open_at_an_end_keeps_its_bounds_and_says_which_end(
+    tmp_path: pathlib.Path, location: str, open_ends: tuple[bool, bool]
+) -> None:
     (transcript,) = _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location}))[
         'ALT'
     ].transcripts
-    assert transcript.cds_undetermined
-    assert not transcript.HasField('cds')
+    cds = transcript.cds
+    assert (cds.start_index, cds.end_index_inclusive, cds.start_open, cds.end_open) == (2, 7, *open_ends)
 
 
-def test_a_transcript_with_an_undetermined_cds_keeps_its_protein(tmp_path: pathlib.Path) -> None:
+def test_a_transcript_with_an_open_cds_keeps_its_protein(tmp_path: pathlib.Path) -> None:
     (transcript,) = _by_symbol(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': '<3..8'}))['ALT'].transcripts
     assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
 
 
-def test_the_report_counts_the_records_that_mark_their_cds_incomplete(
+def test_the_report_counts_the_records_that_leave_a_cds_end_open(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     list(refseq.bundles(_release(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': '<3..8'})))
-    assert 'coding transcripts whose record marks the CDS incomplete: 1;' in capsys.readouterr().err
+    assert "coding transcripts whose record leaves a CDS end open: 1 (5' 1);" in capsys.readouterr().err
 
 
 def test_a_transcript_on_a_scaffold_and_a_patch_only_is_kept_scaffold_first(tmp_path: pathlib.Path) -> None:
@@ -796,20 +803,52 @@ def test_a_sequence_a_transcript_is_not_placed_on_is_refused_by_name(tmp_path: p
         _provider(tmp_path).get_transcript('NM_000050.1', CHROM)
 
 
-def _open_start_alt(tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
-    """The provider over a release whose ALT record marks its CDS incomplete at the start."""
-    return _provider(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': '<3..8'})
+def _open_alt(tmp_path: pathlib.Path, location: str) -> provider_mod.BundleProvider:
+    """The provider over a release whose ALT record states its CDS at `location`."""
+    return _provider(tmp_path, record_cds={**RECORD_CDS, 'NM_000050.1': location})
 
 
-def test_a_coding_transcript_with_no_determined_cds_is_refused_rather_than_served_as_non_coding(
-    tmp_path: pathlib.Path,
+@pytest.mark.parametrize(
+    ('location', 'open_ends'),
+    [('3..8', (False, False)), ('<3..8', (True, False)), ('3..>8', (False, True))],
+    ids=['closed', 'open start', 'open end'],
+)
+def test_the_model_says_which_cds_ends_are_open(
+    tmp_path: pathlib.Path, location: str, open_ends: tuple[bool, bool]
 ) -> None:
-    with pytest.raises(weaver.DataProviderError, match=r'NM_000050\.1: coding, but its CDS is incomplete'):
-        _open_start_alt(tmp_path).get_transcript('NM_000050.1', None)
+    model = _open_alt(tmp_path, location).get_transcript('NM_000050.1', None)
+    assert (model['cds_start_index'], model['cds_end_index']) == (2, 7)
+    assert (model.get('cds_start_open'), model.get('cds_end_open')) == open_ends
 
 
-def test_a_coding_transcript_with_no_determined_cds_still_has_its_sequence(tmp_path: pathlib.Path) -> None:
-    assert _open_start_alt(tmp_path).get_seq('NM_000050.1', 0, 10, 'c') == TRANSCRIPTS['NM_000050.1']
+def test_a_noncoding_model_has_no_open_cds_end(tmp_path: pathlib.Path) -> None:
+    model = _provider(tmp_path).get_transcript('NR_000061.1', None)
+    assert (model['cds_start_index'], model.get('cds_start_open'), model.get('cds_end_open')) == (None, False, False)
+
+
+@pytest.mark.parametrize(
+    ('location', 'variant', 'end'),
+    [('<3..8', 'NM_000050.1:c.1G>C', "5'"), ('3..>8', 'NM_000050.1:c.*1A>C', "3'")],
+    ids=['c. from an open start', 'c.* from an open end'],
+)
+def test_a_position_numbered_from_an_open_cds_end_is_refused(
+    tmp_path: pathlib.Path, location: str, variant: str, end: str
+) -> None:
+    mapper = weaver.VariantMapper(_open_alt(tmp_path, location))
+    with pytest.raises(weaver.ValidationError, match=f'open at the {end} end'):
+        mapper.c_to_g(weaver.parse(variant), None)
+
+
+@pytest.mark.parametrize(
+    ('location', 'variant', 'projected'),
+    [('3..>8', 'NM_000050.1:c.1G>C', 'g.3G>C'), ('<3..8', 'NM_000050.1:c.*1A>C', 'g.9A>C')],
+    ids=['c. on an open end', 'c.* on an open start'],
+)
+def test_a_position_numbered_from_the_closed_end_of_an_open_cds_projects(
+    tmp_path: pathlib.Path, location: str, variant: str, projected: str
+) -> None:
+    mapped = weaver.VariantMapper(_open_alt(tmp_path, location)).c_to_g(weaver.parse(variant), None)
+    assert mapped.format() == f'{ALT_LOCUS}:{projected}'
 
 
 # ---- the GenBank records -------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     # The engine this provides for. Lower bound only: the protocol is weaver's, and an upper bound
     # would make weaver's own test suite, which uses this package, unresolvable on every bump.
-    "hgvs-weaver>=0.6",
+    "hgvs-weaver>=0.7",
     "bagz[gcs]>=0.3.8",
     # The committed stubs are gencode 6.33.5 (grpcio-tools 1.81.1's protoc); an older runtime refuses them.
     "protobuf>=6.33.5,<7",
