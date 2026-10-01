@@ -171,7 +171,7 @@ def gene_message(
         message.previous_symbols.extend(s for s in hgnc['prev_symbol'].split('|') if s)
         message.alias_symbols.extend(s for s in hgnc['alias_symbol'].split('|') if s)
     for synonym in synonyms:
-        if synonym not in message.alias_symbols and synonym != message.symbol:
+        if synonym not in (message.symbol, *message.previous_symbols, *message.alias_symbols):
             message.alias_symbols.append(synonym)
     if not message.symbol:
         raise build.BuildError(f'{feature_id}: no symbol in the annotation or HGNC')
