@@ -33,7 +33,12 @@ projects' buckets, so the format only grows.
 
 ## Installing
 
-`pip install hgvs-weaver-data`; the module is `weaver_data_provider`.
+`pip install hgvs-weaver-data` reads a store on local disk; the module is `weaver_data_provider`. Two extras:
+
+- `hgvs-weaver-data[gcs]` reads a store or genome under a `gs://` prefix (bagz's GCS backend and the Google Cloud
+  Storage client).
+- `hgvs-weaver-data[build]` is `weaver-data-build`: pysam for NCBI's alignment BAMs, protovalidate for the schema check
+  on every record written.
 
 ## Platforms
 
@@ -41,5 +46,5 @@ bagz publishes wheels for Linux x86_64 and macOS arm64; anywhere else, installin
 
 ## Development
 
-`uv sync`, then `uv run pytest`. The Python stubs under `src/` are generated from `proto/` by
+`uv sync --all-extras`, then `uv run pytest`. The Python stubs under `src/` are generated from `proto/` by
 `uv run python scripts/regen.py` and committed.

@@ -1,27 +1,30 @@
 [project]
 name = "hgvs-weaver-data"
-version = "0.1.1"
+version = "0.1.2"
 description = "Reference data for the hgvs-weaver HGVS engine: a builder that cuts RefSeq and Ensembl releases into gene bundles, and the DataProvider that reads them."
 readme = "README.md"
 authors = [{ name = "Tobias Sargeant", email = "toby.sargeant@populationgenomics.org.au" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
+# What a reader of a local store needs; a bucket and the builder are extras.
 dependencies = [
     # The engine this provides for. Lower bound only: the protocol is weaver's, and an upper bound
     # would make weaver's own test suite, which uses this package, unresolvable on every bump.
     "hgvs-weaver>=0.7",
-    "bagz[gcs]>=0.3.8",
+    "bagz>=0.3.8",
     # The committed stubs are gencode 6.33.5 (grpcio-tools 1.81.1's protoc); an older runtime refuses them.
     "protobuf>=6.33.5,<7",
-    # The RefSeq builder reads NCBI's alignment BAMs; the reader does not need it.
-    "pysam>=0.23",
-    "google-cloud-storage>=2.18",
-    # The checksum GCS records on every object, composite uploads included.
+    # Shard and genome digests are crc32c, the checksum GCS records on every object, composite uploads included.
     "google-crc32c>=1.5",
-    # The builder checks every record it writes against the protos' buf.validate constraints.
-    "protovalidate>=1.2",
 ]
+
+[project.optional-dependencies]
+# Reading a store or genome under a `gs://` prefix: bagz's GCS backend, which brings google-cloud-storage.
+gcs = ["bagz[gcs]>=0.3.8"]
+# The builder: NCBI's alignment BAMs are read with pysam, and every record written is checked against
+# the protos' buf.validate constraints.
+build = ["pysam>=0.23", "protovalidate>=1.2"]
 
 [project.scripts]
 weaver-data-build = "weaver_data_provider.build.cli:main"

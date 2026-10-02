@@ -6,6 +6,7 @@ import concurrent.futures
 import gzip
 import pathlib
 import random
+import sys
 
 import pytest
 
@@ -194,3 +195,9 @@ def test_a_catalogue_naming_a_digest_this_reader_cannot_check_is_refused(built: 
     _rewrite_catalogue(root, catalogue)
     with pytest.raises(genome_mod.GenomeError, match='cannot check a md5 digest'):
         genome_mod.Genome(str(root))
+
+
+def test_a_remote_genome_without_the_gcs_extra_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'google.cloud.storage', None)
+    with pytest.raises(ImportError, match=r'hgvs-weaver-data\[gcs\]'):
+        genome_mod.Genome('gs://bucket/reference/genome')
