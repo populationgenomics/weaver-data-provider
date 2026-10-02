@@ -1,6 +1,6 @@
 # Glossary
 
-Shared terms across weaver-data-provider docs and code.
+Shared terms across hgvs-weaver-data docs and code.
 
 ## Reference data
 

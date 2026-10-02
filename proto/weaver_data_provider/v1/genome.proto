@@ -31,7 +31,7 @@ message SequenceCatalogue {
   }];
   repeated SequenceEntry sequences = 3 [(buf.validate.field).repeated.min_items = 1];
   Input source = 4 [(buf.validate.field).required = true]; // the FASTA the genome was cut from
-  string builder = 5 [(buf.validate.field).string.min_len = 1]; // "weaver-data-provider 0.1.0"
+  string builder = 5 [(buf.validate.field).string.min_len = 1]; // "hgvs-weaver-data 0.1.0"
   uint32 block_size = 6 [(buf.validate.field).uint32.gt = 0]; // bases per record of the blocks file
   // The blocks file's own bytes, checked at open: its record numbers mean nothing against another
   // catalogue's lengths.
