@@ -23,7 +23,7 @@ message StoreManifest {
   // Record numbers run across these in this order, not in filename order, so a reader opens the
   // shards this list names, in this order.
   repeated Shard shards = 3 [(buf.validate.field).repeated.min_items = 1];
-  string builder = 4 [(buf.validate.field).string.min_len = 1]; // "weaver-data-provider 0.1.0"
+  string builder = 4 [(buf.validate.field).string.min_len = 1]; // "hgvs-weaver-data 0.1.0"
   // The key and interval tables, each checked at open; a reader refuses a manifest missing either.
   repeated IndexFile index_files = 5 [(buf.validate.field).repeated.min_items = 1];
 }

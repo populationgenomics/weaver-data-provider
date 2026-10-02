@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/weaver-data-provider/${{ github.ref_name }}
+      url: https://pypi.org/project/hgvs-weaver-data/${{ github.ref_name }}
     permissions:
       # OIDC token for PyPI trusted publishing; contents for the GitHub release.
       id-token: write
@@ -57,5 +57,5 @@ jobs:
         run: |-
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "weaver-data-provider ${GITHUB_REF_NAME#v}" \
+            --title "hgvs-weaver-data ${GITHUB_REF_NAME#v}" \
             --generate-notes

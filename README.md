@@ -1,4 +1,4 @@
-# weaver-data-provider
+# hgvs-weaver-data
 
 Reference data for [hgvs-weaver](https://github.com/populationgenomics/hgvs-weaver): a builder that turns a publisher's
 release into a local store, and the `DataProvider` that feeds weaver from it.
@@ -30,6 +30,10 @@ weaver-data-build genome ...     # the assembly, cut into compressed blocks
 
 The at-rest format is defined by the protos under `proto/`, and `buf breaking` gates every change: stores sit in other
 projects' buckets, so the format only grows.
+
+## Installing
+
+`pip install hgvs-weaver-data`; the module is `weaver_data_provider`.
 
 ## Platforms
 

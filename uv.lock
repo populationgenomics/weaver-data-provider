@@ -584,6 +584,53 @@ wheels = [
 ]
 
 [[package]]
+name = "hgvs-weaver-data"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "bagz", extra = ["gcs"] },
+    { name = "google-cloud-storage" },
+    { name = "google-crc32c" },
+    { name = "hgvs-weaver" },
+    { name = "protobuf" },
+    { name = "protovalidate" },
+    { name = "pysam" },
+]
+
+[package.dev-dependencies]
+codegen = [
+    { name = "grpcio-tools" },
+]
+lint = [
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-protobuf" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bagz", extras = ["gcs"], specifier = ">=0.3.8" },
+    { name = "google-cloud-storage", specifier = ">=2.18" },
+    { name = "google-crc32c", specifier = ">=1.5" },
+    { name = "hgvs-weaver", specifier = ">=0.7" },
+    { name = "protobuf", specifier = ">=6.33.5,<7" },
+    { name = "protovalidate", specifier = ">=1.2" },
+    { name = "pysam", specifier = ">=0.23" },
+]
+
+[package.metadata.requires-dev]
+codegen = [{ name = "grpcio-tools", specifier = "==1.81.1" }]
+lint = [
+    { name = "pre-commit", specifier = ">=4" },
+    { name = "pyright", specifier = ">=1.1.400" },
+    { name = "pytest", specifier = ">=9" },
+    { name = "ruff", specifier = ">=0.15" },
+    { name = "types-protobuf", specifier = ">=6" },
+]
+
+[[package]]
 name = "identify"
 version = "2.6.20"
 source = { registry = "https://pypi.org/simple" }
@@ -1044,51 +1091,4 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/31/0b/825cbfd46beb2cc96c46403141081190c1afd1a348d0232a4ebcb6dcd362/virtualenv-21.13.0.tar.gz", hash = "sha256:e8aa144aabba43ffd9058e1fd1a02012b1915f8cb915acc16ad50aba9c13bfdc", size = 5399552, upload-time = "2026-09-26T16:42:09.321Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/2c/8b107f9e029da006c39af38a0a150dde57ecce48b495c79917d1ad963821/virtualenv-21.13.0-py3-none-any.whl", hash = "sha256:ca16ceba89e58d8e2f376769349c63f3ed66f79881ae68bc13e19a9d50e0e987", size = 5486498, upload-time = "2026-09-26T16:42:07.106Z" },
-]
-
-[[package]]
-name = "weaver-data-provider"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "bagz", extra = ["gcs"] },
-    { name = "google-cloud-storage" },
-    { name = "google-crc32c" },
-    { name = "hgvs-weaver" },
-    { name = "protobuf" },
-    { name = "protovalidate" },
-    { name = "pysam" },
-]
-
-[package.dev-dependencies]
-codegen = [
-    { name = "grpcio-tools" },
-]
-lint = [
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "types-protobuf" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "bagz", extras = ["gcs"], specifier = ">=0.3.8" },
-    { name = "google-cloud-storage", specifier = ">=2.18" },
-    { name = "google-crc32c", specifier = ">=1.5" },
-    { name = "hgvs-weaver", specifier = ">=0.7" },
-    { name = "protobuf", specifier = ">=6.33.5,<7" },
-    { name = "protovalidate", specifier = ">=1.2" },
-    { name = "pysam", specifier = ">=0.23" },
-]
-
-[package.metadata.requires-dev]
-codegen = [{ name = "grpcio-tools", specifier = "==1.81.1" }]
-lint = [
-    { name = "pre-commit", specifier = ">=4" },
-    { name = "pyright", specifier = ">=1.1.400" },
-    { name = "pytest", specifier = ">=9" },
-    { name = "ruff", specifier = ">=0.15" },
-    { name = "types-protobuf", specifier = ">=6" },
 ]

@@ -1,6 +1,6 @@
 # Python style
 
-This is the style guide for Python code in weaver-data-provider. It's the high-level / human-judgement layer — the
+This is the style guide for Python code in hgvs-weaver-data. It's the high-level / human-judgement layer — the
 mechanical formatting and naming rules are enforced by [ruff] and aren't restated here. If something contradicts what
 ruff is configured to enforce, ruff wins, and this doc should be updated.
 

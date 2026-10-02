@@ -1,4 +1,4 @@
-# weaver-data-provider development notes
+# hgvs-weaver-data development notes
 
 ## Product
 

@@ -1,10 +1,10 @@
-# weaver-data-provider — product north star
+# hgvs-weaver-data — product north star
 
 ## What it is
 
 [hgvs-weaver](https://github.com/populationgenomics/hgvs-weaver) is an HGVS engine: it parses a variant name, checks it
 against the reference it cites, and projects it between transcript, protein and genome. What it computes is only as
-correct as what it is told about each transcript. weaver-data-provider is what tells it:
+correct as what it is told about each transcript. hgvs-weaver-data is what tells it:
 
 - **a builder** (`weaver-data-build`) that turns a publisher's annotation release and assembly into files on local disk,
   and
