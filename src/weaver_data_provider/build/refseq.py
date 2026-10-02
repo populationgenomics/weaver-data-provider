@@ -44,7 +44,7 @@ from weaver_data_provider.build import common
 from weaver_data_provider.v1 import bundle_pb2
 
 _TAGS = {**common.MANE_STATUS_TAGS, 'RefSeq Select': bundle_pb2.TAG_REFSEQ_SELECT}
-# Entrez's status words for a RefSeq record (`scripts/fetch_refseq_status.py`); any other word fails the build.
+# Entrez's status words for a RefSeq record (`build/entrez.py`); any other word fails the build.
 _STATUSES = {
     'live': bundle_pb2.TRANSCRIPT_STATUS_CURRENT,
     'replaced': bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED,
@@ -71,7 +71,7 @@ class Release:
     # and its sequences and proteins are read from the records.
     transcripts: pathlib.Path | None = None
     proteins: pathlib.Path | None = None
-    # The historical set's table of each version's status in Entrez (`scripts/fetch_refseq_status.py`);
+    # The historical set's table of each version's status in Entrez (`weaver-data-build status`);
     # an annotation release names only current versions and has none.
     status: pathlib.Path | None = None
 
@@ -582,7 +582,7 @@ class _Loaded:
 
 
 def _read_status(path: pathlib.Path) -> dict[str, bundle_pb2.TranscriptStatus]:
-    """The status table: each version's status in Entrez, as `scripts/fetch_refseq_status.py` writes it.
+    """The status table: each version's status in Entrez, as `weaver-data-build status` writes it.
 
     Raises:
         build.BuildError: If the table lacks a column, names a version twice, or states a status word

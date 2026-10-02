@@ -4,6 +4,7 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --annotation genomic.gff.gz --transcripts rna.fna.gz --proteins protein.faa.gz \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --records rna.gbff.gz --shards shards/
+    weaver-data-build status --records RS_2023_03_knownrefseq_rna.gbff.gz --out status.tsv
     weaver-data-build historical --assembly GRCh38 --release RS_2023_03-historical \\
         --annotation RS_2023_03_genomic.gff.gz --records RS_2023_03_knownrefseq_rna.gbff.gz \\
         --alignments RS_2023_03_knownrefseq_alns.bam --status status.tsv \\
@@ -20,17 +21,20 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
     weaver-data-build genome --assembly GRCh38 --fasta genomic.fna.gz --out genome/
 
 Every input is a local file and every output a local directory; fetching and uploading are the caller's.
+The one exception is `status`, which asks Entrez for each version's status, since no published file
+states it; it writes a local table the `historical` build then reads.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import sys
 import warnings
 
 from weaver_data_provider import build
-from weaver_data_provider.build import ensembl, refseq
+from weaver_data_provider.build import ensembl, entrez, refseq
 from weaver_data_provider.build import genome as genome_build
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
@@ -56,6 +60,15 @@ def _refseq(args: argparse.Namespace) -> None:
     record = store_build.shard_record(path)
     print(f'{path}  {record.records} bundles', file=sys.stderr)
     print(path)
+
+
+def _status(args: argparse.Namespace) -> None:
+    versions = entrez.versions_in(args.records)
+    unanswered = entrez.fetch_into(args.out, versions, os.environ.get('NCBI_API_KEY'))
+    print(f'{args.out}: {entrez.summary(args.out)} of {len(versions)} named', file=sys.stderr)
+    if unanswered:
+        print(f'Entrez answered nothing for {len(unanswered)} versions: {unanswered}', file=sys.stderr)
+        raise SystemExit(1)
 
 
 def _historical(args: argparse.Namespace) -> None:
@@ -152,6 +165,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     cut.set_defaults(run=_refseq)
 
+    status = commands.add_parser(
+        'status', help="fetch each version's status in Entrez into the table the historical build reads"
+    )
+    status.add_argument(
+        '--records', type=pathlib.Path, required=True, help='the gzipped GenBank file naming the versions'
+    )
+    status.add_argument('--out', type=pathlib.Path, required=True, help='the TSV to write, or to resume')
+    status.set_defaults(run=_status)
+
     historical = commands.add_parser(
         'historical',
         help="cut NCBI's historical set of retired RefSeq transcripts, published beside an annotation release, "
@@ -174,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
         '--status',
         type=pathlib.Path,
         required=True,
-        help="each version's status in Entrez, TSV, as scripts/fetch_refseq_status.py writes it",
+        help="each version's status in Entrez, TSV, as `weaver-data-build status` writes it",
     )
     historical.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
     historical.add_argument('--mane', type=pathlib.Path, required=True, help='the MANE summary, gzipped TSV')

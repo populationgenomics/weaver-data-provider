@@ -1,34 +1,32 @@
-"""Fetch NCBI's current status of each RefSeq transcript version from Entrez, as a table for the builder.
+"""NCBI's current status of each RefSeq transcript version, fetched from Entrez as a table for the builder.
 
 A GenBank record says when it was replaced, but not when it was suppressed, and a record written
 before its retirement says nothing at all; what NCBI holds a version to be today is in Entrez. This
 asks E-utilities' `esummary` for every version named in a GenBank file and writes one row per
 version: `accession_version`, `status` (`live`, `replaced` or `suppressed`) and `replaced_by` (the
 successor NCBI names, possibly unversioned or another accession; empty otherwise). The builder's
-`historical` command takes the table as `--status`.
+`historical` command takes the table as `--status`. This is the one builder step that reads from the
+network rather than a local file, since no file NCBI publishes states a version's status; it is a
+command of its own, so a build proper still reads only what it was given.
 
 Entrez's summary carries a `status` field only for a retired record; a live one has none, and `live`
 here is read from that absence. A sentinel version known to be replaced is checked first, so a change
 in how Entrez states status fails the run rather than writing every version as live.
 
-    uv run python scripts/fetch_refseq_status.py --records knownrefseq_rna.gbff.gz --out status.tsv
-
 Entrez takes about ten seconds to answer for 500 versions, so requests run three at a time, which
 stays well inside NCBI's limit of three requests a second without an API key (ten with one, read from
 `NCBI_API_KEY`). The fetch of 190,000 versions takes about twenty minutes. Rows are appended to the
-table as each batch is answered, and a rerun with the same `--out` fetches only the versions the table
-lacks, so an interrupted fetch resumes. A version Entrez answers nothing for is reported at the end
-and the run fails, with every other row kept; such a version has no status and the build refuses the
-set until it is resolved by hand.
+table as each batch is answered, and a rerun with the same table fetches only the versions it lacks,
+so an interrupted fetch resumes. A version Entrez answers nothing for is reported at the end and the
+run fails, with every other row kept; such a version has no status and the build refuses the set
+until it is resolved by hand.
 """
 
 from __future__ import annotations
 
-import argparse
 import concurrent.futures
 import gzip
 import json
-import os
 import pathlib
 import sys
 import threading
@@ -36,12 +34,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 BATCH = 500
 ATTEMPTS = 6
 WORKERS = 3
 HEADER = ['accession_version', 'status', 'replaced_by']
 SENTINEL = ('NM_000059.3', 'replaced')  # BRCA2's previous version, replaced by NM_000059.4 in 2019
+# One esummary request: the versions asked for, the API key, the pacer; the summaries by uid.
+Post = Callable[[list[str], 'str | None', '_Pace'], dict[str, dict[str, str]]]
 
 
 class _Pace:
@@ -116,36 +117,38 @@ def _row(summary: dict[str, str]) -> tuple[str, tuple[str, str]]:
     return version, (status or 'live', replaced_by)
 
 
-def _batch(ids: list[str], api_key: str | None, pace: _Pace) -> tuple[dict[str, tuple[str, str]], list[str]]:
+def _batch(
+    ids: list[str], api_key: str | None, pace: _Pace, post: Post
+) -> tuple[dict[str, tuple[str, str]], list[str]]:
     """One batch's `(status, replaced_by)` by version, and the versions Entrez answered nothing for.
 
     A version missing from the batch's answer is asked for once more on its own: esummary now and
     then drops one from a large batch it answers alone.
     """
     out: dict[str, tuple[str, str]] = {}
-    for summary in _post(ids, api_key, pace).values():
+    for summary in post(ids, api_key, pace).values():
         if 'error' not in summary:
             out.update([_row(summary)])
     missing = [v for v in ids if v not in out]
     if missing:
-        for summary in _post(missing, api_key, pace).values():
+        for summary in post(missing, api_key, pace).values():
             if 'error' not in summary:
                 out.update([_row(summary)])
         missing = [v for v in ids if v not in out]
     return out, missing
 
 
-def check_sentinel(api_key: str | None, pace: _Pace) -> None:
-    """Entrez still states a retired record's status as this script reads it.
+def check_sentinel(api_key: str | None, pace: _Pace, post: Post) -> None:
+    """Entrez still states a retired record's status as this module reads it.
 
     Raises:
         RuntimeError: If the sentinel's status is not the one known.
     """
-    found, _ = _batch([SENTINEL[0]], api_key, pace)
+    found, _ = _batch([SENTINEL[0]], api_key, pace, post)
     if found.get(SENTINEL[0], ('', ''))[0] != SENTINEL[1]:
         raise RuntimeError(
             f'{SENTINEL[0]} is known to be {SENTINEL[1]}, but Entrez answered {found.get(SENTINEL[0])}; '
-            'the summary no longer states status as this script reads it'
+            'the summary no longer states status as this module reads it'
         )
 
 
@@ -164,21 +167,35 @@ def read_table(path: pathlib.Path) -> dict[str, tuple[str, str]]:
     return out
 
 
-def fetch_into(path: pathlib.Path, versions: list[str], api_key: str | None, *, log: bool = True) -> list[str]:
+def fetch_into(
+    path: pathlib.Path, versions: list[str], api_key: str | None, *, log: bool = True, post: Post | None = None
+) -> list[str]:
     """Append each version's row to the table as it is answered, skipping versions already there.
+
+    Args:
+        path: The table, created if absent, resumed if present.
+        versions: Every version wanted in it.
+        api_key: An NCBI API key, for the faster rate; None for the anonymous one.
+        log: Whether to report progress on stderr.
+        post: How one esummary request is made; Entrez itself unless a test passes its own.
 
     Returns:
         The versions Entrez answered nothing for.
+
+    Raises:
+        RuntimeError: If the sentinel's status is not the one known, or an answer is not of the shape read.
+        ValueError: If the table's header is not this module's.
     """
+    post = post or _post
     done = read_table(path)
     wanted = [v for v in versions if v not in done]
     batches = [wanted[k : k + BATCH] for k in range(0, len(wanted), BATCH)]
     pace = _Pace(0.1 if api_key else 0.34)  # the least time between two requests NCBI allows
-    check_sentinel(api_key, pace)
+    check_sentinel(api_key, pace, post)
     unanswered: list[str] = []
 
     def fetch(index: int) -> tuple[dict[str, tuple[str, str]], list[str]]:
-        return _batch(batches[index], api_key, pace)
+        return _batch(batches[index], api_key, pace, post)
 
     with path.open('a', encoding='ascii') as fh:
         if not done:
@@ -195,24 +212,9 @@ def fetch_into(path: pathlib.Path, versions: list[str], api_key: str | None, *, 
     return unanswered
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        '--records', type=pathlib.Path, required=True, help='a gzipped GenBank file naming the versions'
-    )
-    parser.add_argument('--out', type=pathlib.Path, required=True, help='the TSV to write, or to resume')
-    args = parser.parse_args(argv)
-    versions = versions_in(args.records)
-    unanswered = fetch_into(args.out, versions, os.environ.get('NCBI_API_KEY'))
+def summary(path: pathlib.Path) -> str:
+    """`189348 versions, live 86975, replaced 98226, suppressed 4147`, from the table as it stands."""
     counts: dict[str, int] = {}
-    for status, _ in read_table(args.out).values():
+    for status, _ in read_table(path).values():
         counts[status] = counts.get(status, 0) + 1
-    summary = ', '.join(f'{status} {n}' for status, n in sorted(counts.items()))
-    print(f'{args.out}: {sum(counts.values())} of {len(versions)} versions, {summary}', file=sys.stderr)
-    if unanswered:
-        print(f'Entrez answered nothing for {len(unanswered)} versions: {unanswered}', file=sys.stderr)
-        raise SystemExit(1)
-
-
-if __name__ == '__main__':
-    main()
+    return f'{sum(counts.values())} versions, ' + ', '.join(f'{status} {n}' for status, n in sorted(counts.items()))
