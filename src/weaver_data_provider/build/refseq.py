@@ -270,8 +270,9 @@ class _Record:
     """What a transcript's GenBank record states: its CDS, and when read for them, its sequence and protein."""
 
     cds: _RecordCds | None = None
+    protein_id: str | None = None  # the CDS's protein_id
     sequence: bytes | None = None
-    protein: tuple[str, bytes] | None = None  # the CDS's protein_id and translation
+    protein: tuple[str, bytes] | None = None  # the CDS's protein_id and translation, when read for sequences
 
 
 def _parse_record_cds(version: str, location: str) -> _RecordCds:
@@ -335,7 +336,10 @@ class _CdsQualifiers:
         if name == '/codon_start' and text != '/codon_start=1' and not self.cds.start_open:
             raise _CdsStatementError(f'{self.version}: a CDS with a closed start but {text}')
         if name == '/protein_id':
-            self.protein_id = _quoted(self.version, name, text)
+            protein_id = _quoted(self.version, name, text)
+            if _ACCESSION.match(protein_id) is None:
+                raise build.BuildError(f'{self.version}: protein_id {protein_id!r} is not a versioned accession')
+            self.protein_id = protein_id
         elif name == '/translation':
             self.translation = _quoted(self.version, name, text)
         self._lines = []
@@ -460,7 +464,11 @@ def _record(
             f'{path}: {version} states {len(features)} CDS features, {len(named)} of them naming a protein'
         )
     chosen = named[0] if named else features[0] if features else None
-    record = _Record(cds=chosen.cds if chosen is not None else None, protein=chosen.protein() if chosen else None)
+    record = _Record(
+        cds=chosen.cds if chosen is not None else None,
+        protein_id=chosen.protein_id if chosen is not None else None,
+        protein=chosen.protein() if chosen is not None else None,
+    )
     if not sequences:
         return record
     residues = ''.join(origin or ()).upper().encode('ascii')
@@ -553,6 +561,18 @@ class _Loaded:
     records: dict[str, _Record]  # by versioned accession
     status: dict[str, bundle_pb2.TranscriptStatus] | None  # by versioned accession; None for an annotation release
     left_out: dict[str, str]  # transcripts left out for a CDS statement the reader refuses, with the reason
+    other_protein: list[str]  # transcripts whose annotation names another protein than their record does
+
+    def protein_of(self, record: _Transcript) -> tuple[str, int] | None:
+        """The transcript's protein: the one its GenBank record names, else the one the annotation's CDS rows name.
+
+        The record is the publisher's statement about the transcript; an annotation generated from alignments
+        can name another version's protein (`docs/design/retired-versions.md`).
+        """
+        stated = self.records.get(f'{record.accession}.{record.version}')
+        if stated is None or stated.protein_id is None:
+            return record.protein
+        return _split(stated.protein_id)
 
     def status_of(self, versioned: str) -> bundle_pb2.TranscriptStatus:
         """A transcript's status: current in an annotation release, as the table states in the historical set."""
@@ -601,6 +621,12 @@ def _report(release: Release, loaded: _Loaded) -> None:
     left_out = ''
     if loaded.left_out:
         left_out = f'records left out for a CDS statement the reader refuses: {len(loaded.left_out)}; '
+    other_protein = ''
+    if loaded.other_protein:
+        other_protein = (
+            f"transcripts whose annotation names another protein than their record, the record's bundled: "
+            f'{len(loaded.other_protein)} (e.g. {", ".join(loaded.other_protein[:3])}); '
+        )
     by_status = ''
     if loaded.status is not None:
         statuses = collections.Counter(
@@ -610,7 +636,7 @@ def _report(release: Release, loaded: _Loaded) -> None:
         )
         by_status = f'by status: {common.counted(statuses)}; '
     print(
-        f'{release.release}: {len(annotation.transcripts)} transcripts, {by_status}{left_out}'
+        f'{release.release}: {len(annotation.transcripts)} transcripts, {by_status}{left_out}{other_protein}'
         f'placements aligned: {common.counted(by_kind)}; bundled without a placement: {common.counted(unplaced)}; '
         f'coding transcripts whose record leaves a CDS end open: {common.counted(open_cds)}; '
         f'RNA features left out for naming no transcript accession: {common.counted(annotation.without_accession)}',
@@ -637,6 +663,19 @@ def _sequence_sets(release: Release, records: dict[str, _Record]) -> tuple[dict[
     return sequences, proteins
 
 
+def _other_protein(annotation: _Annotation, records: dict[str, _Record]) -> list[str]:
+    """Transcripts whose annotation names another protein than their record does, for the report."""
+    out = []
+    for versioned, record in annotation.transcripts.items():
+        stated = records.get(versioned)
+        if record.protein is None or stated is None or stated.protein_id is None:
+            continue
+        annotated = f'{record.protein[0]}.{record.protein[1]}'
+        if annotated != stated.protein_id:
+            out.append(f'{versioned} ({annotated} for {stated.protein_id})')
+    return out
+
+
 def _load(release: Release) -> _Loaded:
     annotation = _read_annotation(release.annotation)
     left_out: dict[str, str] = {}
@@ -657,6 +696,7 @@ def _load(release: Release) -> _Loaded:
         records=records,
         status=_read_status(release.status) if release.status is not None else None,
         left_out=left_out,
+        other_protein=_other_protein(annotation, records),
     )
     _report(release, loaded)
     if left_out:
@@ -699,12 +739,16 @@ def _protein_residues(versioned: str, protein: tuple[str, int], loaded: _Loaded)
 
 
 def _add_protein(
-    bundle: bundle_pb2.GeneBundle, digests: dict[str, bundle_pb2.Sequence], record: _Transcript, loaded: _Loaded
+    bundle: bundle_pb2.GeneBundle,
+    digests: dict[str, bundle_pb2.Sequence],
+    record: _Transcript,
+    protein: tuple[str, int] | None,
+    loaded: _Loaded,
 ) -> None:
-    if record.protein is None:
+    if protein is None:
         return
-    accession, version = record.protein
-    residues = _protein_residues(f'{record.accession}.{record.version}', record.protein, loaded)
+    accession, version = protein
+    residues = _protein_residues(f'{record.accession}.{record.version}', protein, loaded)
     bundle.proteins.add(
         accession=accession,
         version=version,
@@ -719,8 +763,8 @@ def _cross_check(versioned: str, record: _Transcript, aligned: list[common.Place
 
     A placement whose annotation leaves an outer end of the CDS open — the start codon in bases that
     sequence lacks — states no bound to check there, and is passed over. A record stating a CDS the
-    annotation gives none of is a warning too: the transcript is bundled with the record's CDS and,
-    since the protein id comes from the annotation's CDS rows, no protein.
+    annotation gives none of is a warning too: the transcript is bundled with the record's CDS and the
+    protein its record names.
     """
     if not record.coding:
         warnings.warn(
@@ -792,9 +836,10 @@ def _add_transcript(
         transcript.cds.start_open, transcript.cds.end_open = stated.start_open, stated.end_open
         common.check_cds(versioned, transcript.cds, len(residues))
         _cross_check(versioned, record, aligned, stated)
-    if record.protein is not None:
-        transcript.protein_accession, transcript.protein_version = record.protein
-    _add_protein(bundle, digests, record, loaded)
+    protein = loaded.protein_of(record)
+    if protein is not None:
+        transcript.protein_accession, transcript.protein_version = protein
+    _add_protein(bundle, digests, record, protein, loaded)
 
 
 def _gene_bundle(gene: _Gene, members: Iterable[_Transcript], loaded: _Loaded) -> bundle_pb2.GeneBundle:
