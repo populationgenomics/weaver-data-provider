@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import pathlib
+import sys
 
 import bagz
 import pytest
@@ -500,3 +501,9 @@ def test_an_index_over_a_shard_holding_other_than_its_recorded_count_is_refused(
     _files.write_record(record, miscounted.SerializeToString())
     with pytest.raises(build.BuildError, match='different number of records'):
         store_build.write_index(tmp_path / 'store', [path], assembly=_ASSEMBLY)
+
+
+def test_a_remote_store_without_the_gcs_extra_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'google.cloud.storage', None)  # what an install without the extra looks like
+    with pytest.raises(ImportError, match=r'hgvs-weaver-data\[gcs\]'):
+        store.BundleStore('gs://bucket/reference/store')

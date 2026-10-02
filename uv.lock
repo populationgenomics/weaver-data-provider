@@ -585,16 +585,22 @@ wheels = [
 
 [[package]]
 name = "hgvs-weaver-data"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
-    { name = "bagz", extra = ["gcs"] },
-    { name = "google-cloud-storage" },
+    { name = "bagz" },
     { name = "google-crc32c" },
     { name = "hgvs-weaver" },
     { name = "protobuf" },
+]
+
+[package.optional-dependencies]
+build = [
     { name = "protovalidate" },
     { name = "pysam" },
+]
+gcs = [
+    { name = "bagz", extra = ["gcs"] },
 ]
 
 [package.dev-dependencies]
@@ -611,14 +617,15 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bagz", extras = ["gcs"], specifier = ">=0.3.8" },
-    { name = "google-cloud-storage", specifier = ">=2.18" },
+    { name = "bagz", specifier = ">=0.3.8" },
+    { name = "bagz", extras = ["gcs"], marker = "extra == 'gcs'", specifier = ">=0.3.8" },
     { name = "google-crc32c", specifier = ">=1.5" },
     { name = "hgvs-weaver", specifier = ">=0.7" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
-    { name = "protovalidate", specifier = ">=1.2" },
-    { name = "pysam", specifier = ">=0.23" },
+    { name = "protovalidate", marker = "extra == 'build'", specifier = ">=1.2" },
+    { name = "pysam", marker = "extra == 'build'", specifier = ">=0.23" },
 ]
+provides-extras = ["gcs", "build"]
 
 [package.metadata.requires-dev]
 codegen = [{ name = "grpcio-tools", specifier = "==1.81.1" }]

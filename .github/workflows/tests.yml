@@ -18,6 +18,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      - run: uv sync --locked --python 3.13
+      - run: uv sync --locked --all-extras --python 3.13
       # No path arg: collect the testpaths configured in pyproject.toml.
       - run: uv run pytest

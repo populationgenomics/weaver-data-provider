@@ -6,8 +6,12 @@ paths and writes local paths, and records each input by role and by the digest o
 
 from __future__ import annotations
 
-import protovalidate
 from google.protobuf import message as proto_message
+
+try:
+    import protovalidate
+except ImportError as _error:
+    raise ImportError("the builder needs the build extra: pip install 'hgvs-weaver-data[build]'") from _error
 
 import weaver_data_provider
 

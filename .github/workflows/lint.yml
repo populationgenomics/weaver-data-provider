@@ -26,7 +26,7 @@ jobs:
           # anonymous, against a per-IP rate limit shared across the hosted runner pool.
           github_token: ${{ github.token }}
       # Pre-sync the env so the pyright hook's `uv run` is a no-op.
-      - run: uv sync --locked --python 3.13
+      - run: uv sync --locked --all-extras --python 3.13
       - uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit

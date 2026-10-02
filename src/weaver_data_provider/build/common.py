@@ -15,8 +15,11 @@ import re
 import urllib.parse
 from collections.abc import Callable, Iterable
 
-import pysam.libcalignedsegment
-import pysam.libcalignmentfile
+try:
+    import pysam.libcalignedsegment
+    import pysam.libcalignmentfile
+except ImportError as _error:
+    raise ImportError("the builder needs the build extra: pip install 'hgvs-weaver-data[build]'") from _error
 
 from weaver_data_provider import build, refget
 from weaver_data_provider.v1 import bundle_pb2

@@ -47,12 +47,27 @@ def is_remote(path: str) -> bool:
     return path.startswith('gs://')
 
 
+def check_readable(path: str) -> None:
+    """A `gs://` path needs the `gcs` extra; said before any read, so the message names the extra, not a backend.
+
+    Raises:
+        ImportError: If `path` is remote and the extra is not installed.
+    """
+    if not is_remote(path):
+        return
+    try:
+        from google.cloud import storage  # noqa: F401 — installed by bagz[gcs], with bagz's GCS backend
+    except ImportError as error:
+        raise ImportError(f"{path}: reading gs:// needs the gcs extra: pip install 'hgvs-weaver-data[gcs]'") from error
+
+
 def read_record(path: str) -> bytes:
     """The only record of a single-record bagz file.
 
     Raises:
         ValueError: If the file holds other than exactly one record.
     """
+    check_readable(path)
     reader = bagz.Reader(path)
     if len(reader) != 1:
         raise ValueError(f'{path}: expected exactly one record, found {len(reader)}')
@@ -93,6 +108,7 @@ def crc32c_of(path: str, storage_client: storage.Client | None = None) -> str:
     """
     if not is_remote(path):
         return crc32c_of_local(pathlib.Path(path))
+    check_readable(path)
     from google.cloud import storage  # imported on first use, for the reason the TYPE_CHECKING import gives
 
     client = storage_client if storage_client is not None else storage.Client()
