@@ -93,11 +93,11 @@ RS_2024_08), and a version whose accession is absent may have been replaced rath
 replaced by a `.3` that post-dates the release). Entrez states it, per version: live, replaced with a successor, or
 suppressed; the three map onto `TranscriptStatus` in [`bundle.proto`](../../proto/weaver_data_provider/v1/bundle.proto).
 
-The build reads local files only, so the Entrez answers are fetched beforehand by
-[`scripts/fetch_refseq_status.py`](../../scripts/fetch_refseq_status.py) into a table of one row per version, and the
-table is an input to the build, recorded with the shard's other inputs by digest. A version with no row, or a row with a
-status word that is not one of Entrez's, fails the build. The table is a snapshot: a version live when the table was
-fetched and replaced since is current in the shard until the shard is cut again.
+The build reads local files only, so the Entrez answers are fetched beforehand by a command of their own,
+`weaver-data-build status` ([`build/entrez.py`](../../src/weaver_data_provider/build/entrez.py)), into a table of one
+row per version, and the table is an input to the build, recorded with the shard's other inputs by digest. A version
+with no row, or a row with a status word that is not one of Entrez's, fails the build. The table is a snapshot: a
+version live when the table was fetched and replaced since is current in the shard until the shard is cut again.
 
 ### A retired version carries no recommendation
 

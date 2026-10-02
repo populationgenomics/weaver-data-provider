@@ -52,7 +52,8 @@ belong in one repo.
 ## Non-goals
 
 - Not a downloader or mirror. Every builder input is a local file and every output a local directory; fetching the
-  publisher's files and uploading the result are the caller's.
+  publisher's files and uploading the result are the caller's. The one fetch the builder makes itself is each RefSeq
+  version's status from Entrez, which no published file states; it is a command of its own and writes a local table.
 - Not an HGVS engine. Parsing, normalisation and projection are weaver's.
 - Not a resolution policy. Which version to try when a cited one is absent, or how to read a legacy numbering, is
   decided by the application using weaver (Themis, for one).

@@ -21,8 +21,8 @@ open. A lookup is a search over bytes in memory and one ranged read, from local 
 
 ```sh
 weaver-data-build refseq ...     # one RefSeq release's bundles, as a shard
-weaver-data-build historical ... # NCBI's historical set of RefSeq versions, each with its Entrez status
-                                 # (scripts/fetch_refseq_status.py), as a shard to stack under a release's
+weaver-data-build status ...     # each RefSeq version's status in Entrez, the one input no published file states
+weaver-data-build historical ... # NCBI's historical set of RefSeq versions, as a shard to stack under a release's
 weaver-data-build ensembl ...    # one Ensembl release's, placed at its exons and checked against the genome
 weaver-data-build index ...      # the index and manifest over an ordered list of shards
 weaver-data-build genome ...     # the assembly, cut into compressed blocks
