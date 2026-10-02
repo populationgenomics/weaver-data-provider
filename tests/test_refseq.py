@@ -1374,11 +1374,20 @@ def test_the_historical_set_leaves_out_a_record_whose_open_cds_end_is_not_its_la
 def test_the_protein_is_the_records_where_the_annotation_names_another(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # NCBI's historical GFF3 names another version's protein on a third of its CDS rows; the record is the statement
-    renamed = {'protein_id=NP_000050.1': 'protein_id=NP_000099.1'}
-    gff = [row.replace(*next(iter(renamed.items()))) if 'NM_000050.1' in row else row for row in GFF]
-    bundles = _by_symbol(_historical(tmp_path, gff=gff))
+    # NCBI's historical GFF3 names another version's protein on a quarter of its CDS rows; the record is the statement.
+    # ALT's rows name PLUS's protein, which the set holds with other residues, so nothing would fail by itself.
+    gff = [row.replace('protein_id=NP_000050.1', 'protein_id=NP_000010.1') for row in GFF]
+    proteins = {**RECORD_PROTEINS, 'NM_000050.1': ('NP_000050.1', 'MA')}
+    bundles = _by_symbol(_historical(tmp_path, gff=gff, record_proteins=proteins))
     transcript = _transcript(bundles['ALT'], 'NM_000050')
     assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
-    assert [(p.accession, p.version) for p in bundles['ALT'].proteins] == [('NP_000050', 1)]
-    assert "1 transcripts' annotation names another protein than their record" in capsys.readouterr().err
+    (protein,) = bundles['ALT'].proteins
+    residues = {s.digest: bytes(s.residues) for s in bundles['ALT'].sequences}
+    assert (protein.accession, protein.version, residues[protein.sequence_digest]) == ('NP_000050', 1, b'MA')
+    assert "names another protein than their record, the record's bundled: 1" in capsys.readouterr().err
+
+
+def test_a_record_protein_id_that_is_not_versioned_fails_the_build_naming_the_record(tmp_path: pathlib.Path) -> None:
+    proteins = {**RECORD_PROTEINS, 'NM_000050.1': ('NP_000050', 'MA')}
+    with pytest.raises(build.BuildError, match=r"NM_000050\.1: protein_id 'NP_000050' is not a versioned accession"):
+        list(refseq.bundles(_historical(tmp_path, record_proteins=proteins)))
