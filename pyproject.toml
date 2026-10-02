@@ -1,6 +1,6 @@
 [project]
 name = "hgvs-weaver-data"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reference data for the hgvs-weaver HGVS engine: a builder that cuts RefSeq and Ensembl releases into gene bundles, and the DataProvider that reads them."
 readme = "README.md"
 authors = [{ name = "Tobias Sargeant", email = "toby.sargeant@populationgenomics.org.au" }]
