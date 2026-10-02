@@ -377,6 +377,7 @@ def _release(
 def _historical(
     tmp_path: pathlib.Path,
     *,
+    gff: list[str] = GFF,
     status: list[list[str]] = STATUS,
     status_columns: list[str] = STATUS_COLUMNS,
     record_proteins: dict[str, tuple[str, str]] = RECORD_PROTEINS,
@@ -386,7 +387,7 @@ def _historical(
     tmp_path.mkdir(exist_ok=True)
     annotation = tmp_path / 'genomic.gff.gz'
     with gzip.open(annotation, 'wt', encoding='utf-8') as fh:
-        fh.write('\n'.join(GFF) + '\n')
+        fh.write('\n'.join(gff) + '\n')
     return refseq.Release(
         assembly=bundle_pb2.ASSEMBLY_GRCH38,
         release='RS_TEST-historical',
@@ -1368,3 +1369,16 @@ def test_the_historical_set_leaves_out_a_record_whose_open_cds_end_is_not_its_la
     _genbank(release.records, TRANSCRIPTS, cds, proteins=RECORD_PROTEINS, sequences=True)
     assert 'ALT' not in _by_symbol(release)
     assert 'NM_000050.1: CDS open at its end, which is index 7, not 9' in capsys.readouterr().err
+
+
+def test_the_protein_is_the_records_where_the_annotation_names_another(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # NCBI's historical GFF3 names another version's protein on a third of its CDS rows; the record is the statement
+    renamed = {'protein_id=NP_000050.1': 'protein_id=NP_000099.1'}
+    gff = [row.replace(*next(iter(renamed.items()))) if 'NM_000050.1' in row else row for row in GFF]
+    bundles = _by_symbol(_historical(tmp_path, gff=gff))
+    transcript = _transcript(bundles['ALT'], 'NM_000050')
+    assert (transcript.protein_accession, transcript.protein_version) == ('NP_000050', 1)
+    assert [(p.accession, p.version) for p in bundles['ALT'].proteins] == [('NP_000050', 1)]
+    assert "1 transcripts' annotation names another protein than their record" in capsys.readouterr().err

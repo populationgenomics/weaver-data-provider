@@ -34,9 +34,12 @@ carried it, supplemented with older versions never annotated there, and filtered
 expected location. It is anchored on one release, and the anchor can lag the release it sits beside: the set under
 RS_2024_08 is anchored on RS_2023_03. It comes as an annotation GFF3 generated from the alignments, the alignment BAM
 with the records' sequences, and the records as a GenBank flat file, but no sequence FASTA sets: the records carry each
-transcript's sequence and, on its CDS feature, the protein id and translation. A handful of its oldest records state
-their CDS in forms current records never use — a `complement` location on an mRNA, a closed start read from its third
-base where `<` would say the start codon is missing. There is no such set for GRCh37.
+transcript's sequence and, on its CDS feature, the protein id and translation. The GFF3 is generated from the alignments
+rather than curated, and on about a quarter of its CDS rows it names another version's protein — `NP_056473.3` on
+`NM_015658.3` and `NP_056473.2` on `NM_015658.4`, the two swapped — where a release's GFF3 never disagrees with the
+record. A handful of its oldest records state their CDS in forms current records never use — a `complement` location on
+an mRNA, a closed start read from its third base where `<` would say the start codon is missing. There is no such set
+for GRCh37.
 
 A store's manifest orders its shards, and the provider ([`provider.py`](../../src/weaver_data_provider/provider.py))
 answers a named version from the last shard in that order that holds it. "Stacked under" means earlier in the order.
@@ -64,6 +67,15 @@ The shard is stacked under the current release's shard. The store's rule that th
 for it then gives a version in both — one the release above still annotates — the current release's model, and a version
 only the historical set holds, retired or unannotated, its last alignment. Nothing in the store changes for this: the
 shard's immutability and the stacking order already carry it.
+
+### The record names the protein
+
+A transcript's protein is the one its GenBank record names, in the historical set and in a release alike; the
+annotation's CDS rows name one too, and where the two differ the transcript is counted in the build's report. The record
+is the publisher's statement about the transcript, and it is also what supplies the CDS and the translation, so the
+protein accession, the protein sequence and the CDS the provider serves come from one source. The consequence is
+visible: a `c.` variant on a retired version projects to a `p.` on the protein version that transcript version actually
+encoded, which is the one ClinVar names beside it.
 
 ### A record the reader declines to interpret is left out, counted
 
@@ -126,6 +138,10 @@ transcript model has no status field; the status is readable from the bundle.
 
 - **Keep a retired version's tags as history.** A tag is read as a recommendation; a reader would have to know the
   version's status to know whether it still held.
+
+- **Take the protein from the annotation**, as the exon placements are. Right for a release, where the two sources
+  agree, and wrong for 38,000 historical transcripts, each of which would then project its variants onto another
+  version's protein.
 
 - **List every version in a region's answer and let the caller filter by status.** The caller through weaver receives
   bare accessions and a transcript model with no status field, so it could not filter; it would meet a decade of
