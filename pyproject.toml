@@ -35,7 +35,8 @@ weaver-data-build = "weaver_data_provider.build.cli:main"
 # repos' stubs are generated for the same protobuf runtime. buf drives export/lint/breaking.
 codegen = ["grpcio-tools==1.81.1"]
 # Lint + test toolchain.
-lint = ["pre-commit>=4", "ruff>=0.15", "pyright>=1.1.400", "pytest>=9", "types-protobuf>=6"]
+# hgvs-weaver is exact-pinned here because it is exempt from the age gate below; a bump is a reviewed edit.
+lint = ["pre-commit>=4", "ruff>=0.15", "pyright>=1.1.400", "pytest>=9", "types-protobuf>=6", "hgvs-weaver==0.7.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -44,7 +45,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/weaver_data_provider", "src/buf"]
 
+# Supply-chain age gate: never resolve a release younger than 7 days. Declared in the repo, not only in a
+# global uv config, so CI and contributors inherit the same resolution: a global-only gate makes the lock
+# unreproducible, since uv detects the missing setting off-machine and `--locked` fails. Relative, not a
+# fixed date: the intent is an ongoing "nothing younger than 7 days", not a frozen cutoff. A local relock
+# rolls back a committed version younger than the window; it self-heals as the version ages past it.
 [tool.uv]
+exclude-newer = "7 days"
+# hgvs-weaver is first-party: we cut its releases, so the window the gate guards against (a compromised
+# third-party upload) does not apply, and a just-cut release is resolvable at once. Removing the cushion
+# is paired with an exact pin in the lint group above: with no cushion, the pin is what stops a relock
+# from silently adopting a new release; anything exempted here must be exact-pinned there.
+exclude-newer-package = { hgvs-weaver = "0 days" }
 # `uv run` / `uv sync` install these by default, so `uv run pytest` and `uv run pyright` resolve the
 # toolchain; a library consumer still installs only `[project].dependencies`.
 default-groups = ["lint", "codegen"]
