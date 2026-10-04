@@ -36,7 +36,7 @@ publisher's release ──build──▶ store + genome ──read──▶ Data
 
 - **Store**: one record per gene — every transcript, its protein, its alignments and the sequences they cite — in bagz
   shards, one per release, with key and interval tables read into memory at open. A lookup is an in-memory search and
-  one ranged read.
+  one ranged read ([`design/store.md`](design/store.md)).
 - **Genome**: the assembly's sequences cut into compressed blocks, with a catalogue of names, lengths and refget
   digests. A slice, or a transcript's exons together, is one batched read.
 - **Provider**: weaver's `DataProvider`, `Refget` and `TranscriptSearch` over one assembly's store and genome.

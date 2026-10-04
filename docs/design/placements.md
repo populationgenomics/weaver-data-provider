@@ -22,6 +22,20 @@ two honest answers, and which one a caller wants depends on what they are doing 
 
 ## Background
 
+**A transcript record is not the genome spliced at its exons.** Splice a RefSeq transcript out of GRCh38 at the
+annotation's exons, and 2.7% of the time the result is not the record NCBI publishes. Most of that gap is a polyA tail
+the record carries and the genome does not, which alone changes the sequence's refget digest. But 439 transcripts differ
+substantively: a substitution where the assembly carries the minor allele, or, in repeat-array genes like MUC2 and
+NBPF1, hundreds of bases the assembly is missing copies of; fifteen MANE Selects are among them (§Appendix). ClinVar and
+VariantValidator both name variants against the record, so at a site where the two disagree, an engine validating
+against a genome-spliced sequence rejects the name ClinVar publishes and accepts one nobody uses.
+
+**Where record and genome differ by an indel, the placement is a choice.** The same pair of sequences admits several
+alignments, differing in where they put the gap. NCBI publishes its alignment of every RefSeq transcript to the
+assembly, and that is the placement ClinVar's names and VariantValidator's projections follow; the annotation itself
+carries an alignment for only 184 transcripts and never records substitutions. Choosing an aligner does not reproduce
+it: on SHANK3, a general-purpose aligner put the difference 37 bases from where NCBI does (§Appendix).
+
 The GRC releases three kinds of sequence beside the chromosomes. **Alternate loci** (`NT_`, in `ALT_REF_LOCI_*`) are
 other haplotypes of regions too variable for one sequence: the MHC, the KIR cluster. **Unlocalized and unplaced
 scaffolds** are also `NT_`: sequence known to belong to a chromosome, or to the genome, but not where. **Patches**
@@ -140,6 +154,16 @@ chromosome, a patch and an alternate locus share. A feature without one fails th
 
 ## Alternatives considered
 
+- **Splice transcripts out of the assembly at the annotation's exons**, as Mutalyzer does and weaver's own earlier
+  providers did. Cheap, and needs no alignment files. Rejected by measurement: 2.7% of records differ, ClinVar and
+  VariantValidator name against the record, and fifteen MANE Selects are affected. The failure is silent in both
+  directions.
+
+- **Recompute alignments** from record and genome, as VariantValidator's own data store does per exon. It reaches the
+  same answer in the cases checked, but where a publisher has placed a transcript, an indel's placement is not unique,
+  the published one is what the ecosystem's names follow, and matching it depends on choosing the same aligner and
+  scoring.
+
 - **Chromosomes only.** Simple, and wrong for 8,029 transcripts: an alternate-locus-only gene is not in the store, and a
   variant in a fix-patch gene has only the soft-clipped chromosome placement to be projected through.
 
@@ -200,3 +224,36 @@ chromosome, a patch and an alternate locus share. A feature without one fails th
 - A joined CDS is stored by its outer bounds, which numbers its `c.` positions as the record does, but a `p.`
   consequence read by translating the CDS in one frame is wrong past the frameshift. Whether the bundle should carry the
   join, or the provider refuse `p.` on such a transcript, is open; ten records on RS_2025_08 have one.
+
+## Appendix
+
+### Record versus genome, RefSeq GRCh38.p14
+
+Every transcript record placed on a primary chromosome, compared against the same transcript spliced from the genome at
+the annotation's exons.
+
+| measure                                                    | count                   |
+| ---------------------------------------------------------- | ----------------------- |
+| transcript records with a placement                        | 178,356                 |
+| differ from the spliced sequence                           | 4,843 (2.7%)            |
+| of those, a trailing polyA the record alone carries        | 4,404 (median 15 bases) |
+| substantive differences                                    | 439                     |
+| of those, a single substitution                            | 237                     |
+| of those, over 100 bases (NBPF1, MUC2, MUC16, FCGBP, …)    | 51                      |
+| MANE Select transcripts among the substantive              | 15                      |
+| transcripts the annotation itself carries an alignment for | 184 (indels only)       |
+
+### Worked example: SHANK3
+
+`NM_001372044.2` differs from GRCh38 by one substitution and by 39 bases at an exon end that the assembly lacks.
+
+ClinVar 2653415 is the genomic variant `NC_000022.11:g.50697558T>C`, carried by about 95% of the population, because the
+record already has C where the assembly has T. VariantValidator names that variant `c.1568=`: no change to the
+transcript at all.
+
+NCBI's alignment places the substitution at the second base of an exon whose CIGAR begins `1=1X3=2D`, agreeing with
+VariantValidator. A general-purpose aligner given the same two sequences placed it at `c.1531` instead — 37 bases away,
+and not wrong in any way it could detect.
+
+Given NCBI's CIGARs, weaver projects `g.50697558T>C` to `c.1568=` and back. Given a genome-spliced sequence and
+match-only CIGARs, the same engine puts MUC2's `c.12468` about ten kilobases from where ClinVar's variant sits.
