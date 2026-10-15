@@ -13,11 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      matrix:
+        # The floor in requires-python, and the newest release.
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      - run: uv sync --locked --all-extras --python 3.13
+      - run: uv sync --locked --all-extras --python ${{ matrix.python }}
       # No path arg: collect the testpaths configured in pyproject.toml.
       - run: uv run pytest
