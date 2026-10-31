@@ -200,3 +200,60 @@ def test_a_transcript_in_two_releases_is_found_once(stacked: provider_mod.Bundle
     assert stacked.get_symbol_accessions('FWD', 'gene', 'p') == [
         (weaver.IdentifierType.ProteinAccession, 'NP_000001.1')
     ]
+
+
+@pytest.mark.parametrize(('protein', 'transcript'), [('NP_000001.1', 'NM_000001.1'), ('NP_000002.1', 'NM_000002.1')])
+def test_a_protein_answers_the_transcript_that_encodes_it(
+    provider: provider_mod.BundleProvider, protein: str, transcript: str
+) -> None:
+    assert provider.get_symbol_accessions(protein, 'p', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, transcript)
+    ]
+
+
+@pytest.mark.parametrize('protein', ['NP_999999.1', 'NP_000001.2'])
+def test_a_protein_version_the_store_does_not_hold_has_no_transcript(
+    provider: provider_mod.BundleProvider, protein: str
+) -> None:
+    assert provider.get_symbol_accessions(protein, 'p', 'c') == []
+
+
+def test_a_bare_protein_accession_has_no_transcript(provider: provider_mod.BundleProvider) -> None:
+    assert provider.get_symbol_accessions('NP_000001', 'p', 'c') == []
+
+
+@pytest.fixture
+def two_versions(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """FWD's bundle holds NM_000001.1 encoding NP_000001.1 and NM_000001.2 encoding NP_000001.2."""
+    made, _, _, _ = testing.bundles()
+    fwd = made[0]
+    transcript = fwd.transcripts.add()
+    transcript.CopyFrom(fwd.transcripts[0])
+    transcript.version = 2
+    transcript.protein_version = 2
+    protein = fwd.proteins.add()
+    protein.CopyFrom(fwd.proteins[0])
+    protein.version = 2
+    protein.transcript_version = 2
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'two', [shard], assembly=testing.ASSEMBLY)
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'two')), built.genome)
+
+
+@pytest.mark.parametrize(('protein', 'transcript'), [('NP_000001.1', 'NM_000001.1'), ('NP_000001.2', 'NM_000001.2')])
+def test_a_protein_version_answers_only_the_transcript_encoding_that_version(
+    two_versions: provider_mod.BundleProvider, protein: str, transcript: str
+) -> None:
+    assert two_versions.get_symbol_accessions(protein, 'p', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, transcript)
+    ]
+
+
+def test_weaver_back_translates_a_protein_variant_without_being_given_a_transcript(
+    provider: provider_mod.BundleProvider,
+) -> None:
+    mapper = weaver.VariantMapper(provider)
+    coding, _ = mapper.p_to_c(weaver.parse('NP_000001.1:p.Lys2Arg'))
+    assert coding.ac == 'NM_000001.1'

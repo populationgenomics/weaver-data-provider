@@ -123,7 +123,12 @@ class BundleProvider:
     def get_symbol_accessions(
         self, symbol: str, source_kind: str, target_kind: str
     ) -> list[tuple[weaver.IdentifierType, str]]:
-        """`gene -> c`: a gene's transcripts; `c -> p` or `gene -> p`: proteins; anything else is empty."""
+        """`gene -> c` or `p -> c`: transcripts; `c -> p` or `gene -> p`: proteins; anything else is empty.
+
+        `p -> c` answers the transcripts recorded as encoding that version of the protein. A protein,
+        like a transcript, is named by version: a bare accession, or a version no release holds, answers
+        empty.
+        """
         if source_kind == 'gene' and target_kind == 'c':
             transcripts = (f'{t.accession}.{t.version}' for b in self._store.by_symbol(symbol) for t in b.transcripts)
             return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
@@ -137,6 +142,17 @@ class BundleProvider:
             return [
                 (weaver.IdentifierType.ProteinAccession, f'{transcript.protein_accession}.{transcript.protein_version}')
             ]
+        if source_kind == 'p' and target_kind == 'c':
+            if '.' not in symbol:
+                return []
+            base, _, version = symbol.partition('.')
+            transcripts = (
+                f'{t.accession}.{t.version}'
+                for b in self._store.by_protein(symbol)
+                for t in b.transcripts
+                if t.protein_accession == base and str(t.protein_version) == version
+            )
+            return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
         if source_kind == 'gene' and target_kind == 'p':
             proteins = (f'{p.accession}.{p.version}' for b in self._store.by_symbol(symbol) for p in b.proteins)
             return [(weaver.IdentifierType.ProteinAccession, ac) for ac in dict.fromkeys(proteins)]
