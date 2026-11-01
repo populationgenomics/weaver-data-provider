@@ -11,6 +11,10 @@ jobs:
     # Skips draft PRs.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The floor requires-python declares, and the version the other jobs run.
+        python: ["3.11", "3.13"]
     permissions:
       contents: read
     steps:
@@ -18,6 +22,6 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      - run: uv sync --locked --all-extras --python 3.13
+      - run: uv sync --locked --all-extras --python ${{ matrix.python }}
       # No path arg: collect the testpaths configured in pyproject.toml.
       - run: uv run pytest

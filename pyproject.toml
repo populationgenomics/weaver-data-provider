@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Tobias Sargeant", email = "toby.sargeant@populationgenomics.org.au" }]
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 # What a reader of a local store needs; a bucket and the builder are extras.
 dependencies = [
     # The engine this provides for. Lower bound only: the protocol is weaver's, and an upper bound
@@ -63,7 +63,7 @@ default-groups = ["lint", "codegen"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py311"
 extend-exclude = ["src/weaver_data_provider/v1", "src/buf"]
 
 [tool.ruff.format]
@@ -91,7 +91,7 @@ testpaths = ["tests"]
 strict_config = true
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.11"
 # Resolve imports from the uv-managed venv, so editor pyright sees installed deps the same way
 # `uv run pyright` does.
 venvPath = "."
