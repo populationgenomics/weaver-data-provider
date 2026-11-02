@@ -17,6 +17,10 @@ jobs:
         python: ["3.11", "3.13"]
     permissions:
       contents: read
+    strategy:
+      matrix:
+        # The floor in requires-python, and the newest release.
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
