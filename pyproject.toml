@@ -36,7 +36,7 @@ weaver-data-build = "weaver_data_provider.build.cli:main"
 codegen = ["grpcio-tools==1.81.1"]
 # Lint + test toolchain.
 # hgvs-weaver is exact-pinned here because it is exempt from the age gate below; a bump is a reviewed edit.
-lint = ["pre-commit>=4", "ruff>=0.15", "pyright>=1.1.400", "pytest>=9", "types-protobuf>=6", "hgvs-weaver==0.7.0"]
+lint = ["pre-commit>=4", "ruff>=0.15", "pyright>=1.1.400", "pytest>=9", "types-protobuf>=6", "hgvs-weaver==2.0.0"]
 
 [build-system]
 requires = ["hatchling"]
