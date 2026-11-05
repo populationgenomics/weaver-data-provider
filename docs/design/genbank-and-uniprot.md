@@ -26,13 +26,12 @@ The decision is to **serve these records for what they state, and never to place
 - **These records are found by accession, never by gene.** A gene's transcripts and proteins, as weaver enumerates them
   for a name that cites only a gene, stay the reference publishers' records.
 - **Versions are stored as published, and a bare accession is not resolved by the provider.** A UniProt name almost
-  never carries a version. Choosing one is resolution policy, which belongs to an explicit step in weaver
-  ([hgvs-weaver#145](https://github.com/populationgenomics/hgvs-weaver/issues/145)); the provider lists the versions it
-  holds.
+  never carries a version. The provider lists the versions it holds; weaver reads the name on each
+  ([hgvs-weaver#145](https://github.com/populationgenomics/hgvs-weaver/issues/145)), and choosing among them is the
+  caller's policy.
 
-Proteins work with weaver as it is. A GenBank transcript needs weaver to accept a transcript with no placement
-([hgvs-weaver#138](https://github.com/populationgenomics/hgvs-weaver/issues/138)); until then the provider stores it and
-answers that it has no placement.
+Both need hgvs-weaver 2.0, which reads a transcript with no placement on its own sequence and lists the versions of an
+unversioned accession.
 
 ## Background
 
@@ -91,8 +90,8 @@ measured; where it names only the entry, it is a correspondence, not an identity
 - **No placement of a GenBank record on the genome**, by any route: an alignment this package runs, NCBI's frozen 2022
   alignments, or one inherited through a RefSeq transcript. Each is weighed under
   [Alternatives considered](#alternatives-considered).
-- **No choice of version for a bare accession.** The provider lists versions; choosing one is weaver's explicit step,
-  under a policy the caller names.
+- **No choice of version for a bare accession.** The provider lists versions; weaver reads the name on each, and the
+  caller chooses.
 - **No mapping between publishers beyond sequence identity.** That `AAA73985.1` has the same residues as `NP_009225.1`
   is a fact the store holds; that a `U14680.1` position "is" an `NM_007294.4` position is a mapping, and mapping is
   projection.
@@ -109,7 +108,11 @@ The provider answers three things about these records: their residues, the CDS o
 a GenBank transcript encodes. weaver then validates a name against the record's own sequence, normalises it there, and
 predicts a GenBank transcript's protein consequence from its own CDS. Everything that needs a genome position is refused
 with an error that names the missing placement: `c.` to `g.`, the transcripts over a region, an intronic offset such as
-`c.4096+1`.
+`c.4096+1`. The provider gives the record without a placement whatever genome the caller asks for, so the error weaver
+raises says the placement is missing rather than that the lookup failed.
+
+A shift in normalisation runs the length of the record. A placed transcript's shift stops at an exon junction, so that
+the change stays one change on the genome; a GenBank mRNA has no genome to disagree with, and states no exons.
 
 Refusing is the honest answer because the alternative is a placement nobody published. Where a GenBank mRNA differs from
 the genome by an insertion or deletion inside a repeat, where the gap goes is a choice, and the choice moves every
@@ -141,7 +144,7 @@ Which records a shard holds is decided by the files the build is given, and the 
 | GenBank mRNA without a CDS    | left out, counted                            | no CDS stated is not "non-coding"                   |
 | GenBank CDS with an exception | left out, counted                            | its translation is not the CDS's                    |
 | UniProt canonical isoform     | a protein, versioned by its sequence version | no transcript                                       |
-| UniProt other isoform         | a protein                                    | its version is an [open question](#open-questions)  |
+| UniProt other isoform         | a protein, under its bare ID                 | one sequence per shard, as the release states it    |
 
 Records left out are counted in the build's report with the reason, as the historical set's undecipherable records are
 ([`retired-versions.md`](retired-versions.md)). The provider then answers "not in the reference data" for them: a
@@ -189,17 +192,27 @@ added.
 ### Versions are stored as published; the provider does not choose one
 
 A GenBank record is versioned like a RefSeq one, and is keyed the same way. A UniProt canonical is keyed by its
-accession and sequence version. No publisher writes that pair as `P38398.3`; the store has to, because every key it
-holds is accession and version. The provider's answers therefore carry the version, which UniProt's own spelling does
-not.
+accession and sequence version. No publisher writes that pair as `P38398.3`, but it names one sequence, as UniProt's
+archive does. The provider's answers therefore carry the version, which UniProt's own spelling does not.
 
-A name with no version is not resolved by the provider. It answers a versioned name and refuses a bare one, as it does
-for transcripts today. It also lists the versions it holds under a bare accession, newest first, for weaver's resolution
-step ([hgvs-weaver#145](https://github.com/populationgenomics/hgvs-weaver/issues/145)). That step tries the versions
-under a policy the caller names and reports which it chose. The reason it lives there and not here: a choice of version
-made inside the provider would be invisible to everything downstream. And "the newest version whose residue matches" is
-sometimes right only by chance, after an insertion upstream shifted the numbering. weaver's step reports whether the
-versions disagreed, so a caller can refuse the cases where the choice mattered.
+A UniProt isoform other than the canonical has no version, so it is keyed by its bare ID, `P38398-2`, with the sequence
+the shard's release gives it. A shard cut from one release holds one sequence per isoform ID; where shards from two
+releases are stacked, the later one answers, as for every record. The store does not number the sequences an isoform ID
+has named over time. A `P38398-2.2` would be a name no publisher issued, which a caller could then write and nobody else
+resolve.
+
+A name with no version is not resolved by the provider. It answers a versioned name and refuses a bare one, unless the
+record has no version of its own. It also lists what it holds under a bare accession: the versions, newest first, or for
+an isoform the bare ID alone. weaver reads a name on each
+([hgvs-weaver#145](https://github.com/populationgenomics/hgvs-weaver/issues/145)), and returns every reading consistent
+with its sequence, with the store's status and tags for each and whether the name stated anything that was checked. The
+caller chooses among them: MANE Select first, the newest version, or only an answer one sequence supports. The reason
+the choice lives with the caller and not here: a choice made inside the provider would be invisible to everything
+downstream. And "the newest version whose residue matches" is sometimes right only by chance, after an insertion
+upstream shifted the numbering.
+
+These records carry no status or tags from their publisher. A GenBank or UniProt record is current in the release the
+shard was cut from, and has no MANE or Select tag.
 
 ### The provider asks the store what kind an accession is
 
@@ -210,14 +223,16 @@ protein, a sequence of the genome is genomic.
 
 ### Consequences
 
-- **Proteins from both publishers work with the current weaver.** A protein is served through a sequence lookup, which
-  needs nothing new.
-- **GenBank transcripts wait on weaver.** weaver requires every transcript to carry a placement
-  ([hgvs-weaver#138](https://github.com/populationgenomics/hgvs-weaver/issues/138)). Until it accepts one without, the
-  provider stores GenBank transcripts and answers that they have no placement, which is true.
-- **The BIC names are answered with an error, correctly.** ClinVar's BRCA1/2 names on `U14680.1` and `U43746.1` are
-  written `n.`, which HGVS reserves for non-coding records. Served the record with its CDS, weaver has what it needs to
-  say so. Reading BIC numbering as `c.` is a resolution policy, for the application.
+- **The provider needs hgvs-weaver 2.0.** A protein is served through a sequence lookup, which any weaver reads; a
+  transcript with no placement and the list of an accession's versions are 2.0's.
+- **The BIC names are answered on the record, as written.** ClinVar's BRCA1/2 names on `U14680.1` and `U43746.1` are
+  written `n.`, which HGVS reserves for non-coding records, but BIC numbering counts from the record's first base, which
+  is what `n.` on the record means: `U14680.1`'s CDS starts at base 120, and BIC's `185delAG` deletes the record's bases
+  185 and 186, an AG. weaver reads an `n.` position on a coding record, so these names validate and normalise as
+  written. Reading them as `c.`, or projecting them to `NM_007294.4`, is still the caller's step.
+- **Equivalence on these records is refused**, even between two spellings on one record, because weaver compares on the
+  genome. Comparing on the record alone is weaver's to add
+  ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
 - **A store's key and interval tables are unchanged in shape.** The new records add keys, and no intervals.
 
 ## Alternatives considered
@@ -258,7 +273,16 @@ Resolve a bare accession to the only version held, or to the newest one consiste
 
 Rejected because the choice would be invisible. weaver would receive one sequence and report its answer as though the
 name had cited that version. The newest-consistent rule is also wrong in exactly the case it cannot see, a numbering
-shift between versions. weaver's resolution step makes the same choice where it can be named and reported.
+shift between versions. weaver lists every consistent reading instead, and the caller's choice among them is visible in
+its code.
+
+### Number an isoform's sequences
+
+Give each sequence an isoform ID has named a version of the store's own, from UniProt's sequence archive or from the
+releases that held it, so that a reassigned ID like `P38398-2` keeps both sequences and weaver can report that they
+disagree. Rejected because the version would be this package's invention, issued under UniProt's accession: a caller
+would see `P38398-2.2`, write it, and find no other resolver that knows it. One sequence per isoform per shard is what
+the release states.
 
 ### Find these records by gene too
 
@@ -274,11 +298,6 @@ already merge them, by construction.
 
 ## Open questions
 
-- **What version does a UniProt isoform carry?** It has none of its own. Two candidates:
-  - UniProt's sequence archive counts the sequences an isoform ID has named, which is UniProt's own number. It needs the
-    archive's data, which is large and not yet tried in bulk.
-  - The UniProt release the shard was cut from. That is available in every build, but it is a release, not a version:
-    stacked releases that agree would hold one sequence under two versions.
 - **Does a store holding these shards need a new format version?** An older reader would treat a GenBank accession as
   unknown, and could answer a digest with a UniProt accession it then cannot serve. Those are errors, not wrong answers,
   but they are a reader misunderstanding files it accepted. Bumping the version makes it refuse them, at the cost of a
