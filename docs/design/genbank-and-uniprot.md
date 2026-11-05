@@ -77,7 +77,7 @@ UniProt's archive. More than half of human Swiss-Prot entries have changed seque
 shift the numbering: haemoglobin beta's first sequence version lacked the initiator methionine, so its sickle-cell
 residue was Glu6 there and is Glu7 now.
 
-Isoforms other than the canonical have IDs of their own (`P38398-2`), but no version, and an isoform ID has been
+Each isoform, the canonical included, has an ID of its own (`P38398-2`), but no version, and an isoform ID has been
 reassigned to a different sequence: `P38398-2` named an 1,863-residue sequence until 2013 and a 63-residue one since.
 Citations of either almost never carry a version.
 
@@ -143,7 +143,7 @@ Which records a shard holds is decided by the files the build is given, and the 
 | its CDS's protein             | a protein, linked to that transcript         | the record's translation                            |
 | GenBank mRNA without a CDS    | left out, counted                            | no CDS stated is not "non-coding"                   |
 | GenBank CDS with an exception | left out, counted                            | its translation is not the CDS's                    |
-| UniProt canonical isoform     | a protein, versioned by its sequence version | no transcript                                       |
+| UniProt canonical isoform     | a protein, versioned by its sequence version | also keyed under its isoform ID; no transcript      |
 | UniProt other isoform         | a protein, under its bare ID                 | one sequence per shard, as the release states it    |
 
 Records left out are counted in the build's report with the reason, as the historical set's undecipherable records are
@@ -195,8 +195,12 @@ A GenBank record is versioned like a RefSeq one, and is keyed the same way. A Un
 accession and sequence version. No publisher writes that pair as `P38398.3`, but it names one sequence, as UniProt's
 archive does. The provider's answers therefore carry the version, which UniProt's own spelling does not.
 
-A UniProt isoform other than the canonical has no version, so it is keyed by its bare ID, `P38398-2`, with the sequence
-the shard's release gives it. A shard cut from one release holds one sequence per isoform ID; where shards from two
+Every UniProt isoform, the canonical included, has an isoform ID and no version, so it is keyed by its bare ID,
+`P38398-2`, with the sequence the shard's release gives it. The canonical is keyed twice: under its sequence version,
+and under the isoform ID the release marks as the one it displays. That ID is not always `-1`. In release 2026_03 it is
+another number in 481 of the 10,684 human entries with isoforms, and 116 of them assign no `-1` at all. An ID the
+release does not assign is not keyed: `Q96AP0-1` is not in the reference data, although UniProt's own web service
+answers it with the canonical. A shard cut from one release holds one sequence per isoform ID; where shards from two
 releases are stacked, the later one answers, as for every record. The store does not number the sequences an isoform ID
 has named over time. A `P38398-2.2` would be a name no publisher issued, which a caller could then write and nobody else
 resolve.
@@ -221,6 +225,15 @@ prefixes. That list cannot name GenBank or UniProt accessions, which follow no p
 provider instead asks its key tables: an accession held as a transcript is a transcript, one held as a protein is a
 protein, a sequence of the genome is genomic.
 
+### A store holding these shards is format version 2
+
+A reader of the current format decides an accession's kind by its prefix. From a store holding `U14680.1` it would
+answer that the record is not in the reference data, which is an answer, and false. So a store with GenBank or UniProt
+shards is stamped format version 2, which the readers deployed so far refuse at open, and a store with only RefSeq and
+Ensembl shards stays at version 1, which they still read. Each shard records when it is cut whether it needs version 2,
+so the index builder takes the stamp from its shards rather than from a list of publishers. The range of versions a
+reader opens, and how it narrows, is the store's policy ([`store.md`](store.md#a-store-is-files-and-it-opens-once)).
+
 ### Consequences
 
 - **The provider needs hgvs-weaver 2.0.** A protein is served through a sequence lookup, which any weaver reads; a
@@ -230,6 +243,11 @@ protein, a sequence of the genome is genomic.
   is what `n.` on the record means: `U14680.1`'s CDS starts at base 120, and BIC's `185delAG` deletes the record's bases
   185 and 186, an AG. weaver reads an `n.` position on a coding record, so these names validate and normalise as
   written. Reading them as `c.`, or projecting them to `NM_007294.4`, is still the caller's step.
+- **A canonical that moves leaves its old name behind.** In release 2026_01 UniProt made `P08195-2` the canonical of
+  P08195 in place of `P08195-1`, and the sequence version went from 3 to 4. Each isoform ID kept its sequence; the
+  accession's did not. A citation of `P08195:p.…` written in 2025 meant the sequence now keyed `P08195-1`, but `P08195`
+  lists only `P08195.4`, and nothing in one release connects the two names. Connecting them needs UniProt's archive,
+  which a build does not read.
 - **Equivalence on these records is refused**, even between two spellings on one record, because weaver compares on the
   genome. Comparing on the record alone is weaver's to add
   ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
@@ -284,6 +302,19 @@ disagree. Rejected because the version would be this package's invention, issued
 would see `P38398-2.2`, write it, and find no other resolver that knows it. One sequence per isoform per shard is what
 the release states.
 
+### Key the canonical as `-1`
+
+UniProt's web service answers `P38398-1` with BRCA1's canonical, and answers `-1` with the canonical even for an entry
+that assigns no `-1`. Rejected because the release says otherwise for one entry in twenty: `P08195-1` is a non-canonical
+isoform with a sequence of its own, so keying the canonical under it would serve the wrong residues for a name that
+cites the isoform.
+
+### Leave the format version alone, or raise it for every store
+
+Leaving it alone lets a current reader answer "not in the reference data" for records a store holds. Raising it for
+every store refuses RefSeq-only stores that current readers read correctly, and makes every deployed reader upgrade for
+a change most stores do not carry.
+
 ### Find these records by gene too
 
 List a gene's GenBank mRNAs and UniProt proteins with its RefSeq and Ensembl ones. Rejected for the reasons under
@@ -295,16 +326,6 @@ reference sequences, and every extra candidate is one more way for weaver to ans
 Build GenBank and UniProt records into stores of their own, beside the RefSeq store. Rejected because weaver reads
 through one provider, and a caller would have to write the provider that merges them. Shards stacked behind one index
 already merge them, by construction.
-
-## Open questions
-
-- **Does a store holding these shards need a new format version?** An older reader would treat a GenBank accession as
-  unknown, and could answer a digest with a UniProt accession it then cannot serve. Those are errors, not wrong answers,
-  but they are a reader misunderstanding files it accepted. Bumping the version makes it refuse them, at the cost of a
-  reader that accepts both versions.
-- **Is `P38398-1` a name for the canonical?** UniProt defines isoform 1 as the canonical, and citations use both
-  spellings. Keying the canonical under both is cheap. The question is whether it would be wrong after a release in
-  which the canonical choice moved to another isoform.
 
 ## Appendix
 
