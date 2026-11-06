@@ -44,9 +44,11 @@ recommended, and UniProt is not mentioned. In practice both appear:
   `U43746.1` carry the Breast Cancer Information Core's numbering, which ClinVar still holds about 3,700 submissions in.
   MECP2's `AJ132917.1` and TREX1's `AF319569.1` follow. NCBI itself lists nine such records as reference standards for
   their genes. Across ClinVar, names on GenBank accessions are about 0.07% of submitted expressions, concentrated on
-  these few records ([Appendix](#who-cites-genbank-records)).
+  these few records ([Appendix](#who-cites-genbank-records)). Papers write the same accessions without a version about
+  four times as often as with one.
 - **UniProt accessions** are how structural biology and protein-function papers name residues, and how UniProt's own
-  variant catalogue writes them (`P38398:p.Cys61Gly`).
+  variant catalogue writes them (`P38398:p.Cys61Gly`). They are almost always written without a version
+  ([below](#how-uniprot-names-are-written)).
 
 Other tools mostly refuse these names. VariantValidator and LOVD accept only RefSeq, Ensembl and LRG. Mutalyzer
 describes a GenBank name on the record itself and does not project it. Ensembl VEP accepts a UniProt accession only as a
@@ -73,13 +75,26 @@ BRCA2's `U43746.1` is not among the sources of `NM_000059.4`.
 
 A UniProt entry has an accession (`P38398`) and one sequence, its canonical isoform, with a sequence version that
 increments when the sequence changes. Accession and sequence version together name one sequence, retrievable from
-UniProt's archive. More than half of human Swiss-Prot entries have changed sequence at least once, and a change can
-shift the numbering: haemoglobin beta's first sequence version lacked the initiator methionine, so its sickle-cell
-residue was Glu6 there and is Glu7 now.
+UniProt's archive, and NCBI Protein writes the pair as `P38398.2`. More than half of human Swiss-Prot entries have
+changed sequence at least once, and a change can shift the numbering: haemoglobin beta's first sequence version lacked
+the initiator methionine, so its sickle-cell residue was Glu6 there and is Glu7 now.
 
-Each isoform, the canonical included, has an ID of its own (`P38398-2`), but no version, and an isoform ID has been
-reassigned to a different sequence: `P38398-2` named an 1,863-residue sequence until 2013 and a 63-residue one since.
-Citations of either almost never carry a version.
+An entry with more than one isoform gives each an ID of its own (`P38398-2`), the canonical included; about half of
+reviewed human entries have one sequence and no isoform IDs. An isoform ID has no version, and UniProt reuses them:
+`P38398-2` named an 1,863-residue sequence until 2013 and a 63-residue one since. The bare accession moves too, since it
+names whichever sequence is canonical in the current release.
+
+### How UniProt names are written
+
+Nearly always as the bare accession. Of about 600 open-access papers citing ten well-studied proteins by accession, 98%
+wrote the bare accession, about 3% an isoform ID, 6% an entry name such as `P53_HUMAN`, and none a version. Where a
+paper wrote `-1`, it usually meant the canonical of its day. Resources follow the same pattern. UniProt's variant
+catalogue, AlphaMissense, SIFTS and MaveDB number residues on the bare accession's canonical. VEP, dbNSFP and PDBe write
+isoform IDs. ClinVar holds about 21 thousand protein names on UniProt accessions, all bare, and all written by ClinVar
+rather than a submitter.
+
+Two spellings with a dot are in use, and they mean different things. NCBI Protein's `P04637.4` is the sequence version.
+VEP's `P04637.312` is the entry version, which counts every change to the entry, annotation included.
 
 UniProt's canonical isoform is the MANE Select protein for about 91% of genes, and UniProt's entries cite their MANE
 Select transcript. Where a UniProt cross-reference names the isoform, the sequences were identical in every case
@@ -99,6 +114,8 @@ measured; where it names only the entry, it is a correspondence, not an identity
   included are decided by the files the caller provides.
 - **GenBank chromosome accessions** (`CM000663.2` for chromosome 1) are not these records. They are other names for
   sequences the genome already holds, and belong to the genome's catalogue.
+- **UniProt entry names** (`P53_HUMAN`) are not keyed. An entry name names an entry, not a sequence, and the sequence a
+  citer meant is not always the canonical: ProteinGym's `RASK_HUMAN` assays are numbered on `P01116-2`.
 
 ## Design
 
@@ -192,18 +209,20 @@ added.
 ### Versions are stored as published; the provider does not choose one
 
 A GenBank record is versioned like a RefSeq one, and is keyed the same way. A UniProt canonical is keyed by its
-accession and sequence version. No publisher writes that pair as `P38398.3`, but it names one sequence, as UniProt's
-archive does. The provider's answers therefore carry the version, which UniProt's own spelling does not.
+accession and sequence version, spelled as NCBI Protein spells it, `P38398.2`. That names one sequence, as UniProt's
+archive does, so the provider's answers carry a version that UniProt's own spelling does not. VEP's entry-version
+spelling looks the same and is not. For nearly every entry its number exceeds any sequence version, so the provider
+answers that it is not in the reference data; for a young entry whose two numbers coincide, nothing in the name tells
+them apart.
 
-Every UniProt isoform, the canonical included, has an isoform ID and no version, so it is keyed by its bare ID,
-`P38398-2`, with the sequence the shard's release gives it. The canonical is keyed twice: under its sequence version,
-and under the isoform ID the release marks as the one it displays. That ID is not always `-1`. In release 2026_03 it is
-another number in 481 of the 10,684 human entries with isoforms, and 116 of them assign no `-1` at all. An ID the
-release does not assign is not keyed: `Q96AP0-1` is not in the reference data, although UniProt's own web service
-answers it with the canonical. A shard cut from one release holds one sequence per isoform ID; where shards from two
-releases are stacked, the later one answers, as for every record. The store does not number the sequences an isoform ID
-has named over time. A `P38398-2.2` would be a name no publisher issued, which a caller could then write and nobody else
-resolve.
+An isoform ID has no version, so an isoform is keyed by its bare ID, `P38398-2`, with the sequence the shard's release
+gives it. The canonical of an entry with isoforms is keyed twice: under its sequence version, and under the isoform ID
+the release marks as the one it displays. That ID is not always `-1`. In release 2026_03 it is another number in 481 of
+the 10,684 human entries with isoforms, and 116 of them assign no `-1` at all. An ID the release does not assign is not
+keyed: `Q96AP0-1` is not in the reference data, although UniProt's own web service answers it with the canonical. A
+shard cut from one release holds one sequence per isoform ID; where shards from two releases are stacked, the later one
+answers, as for every record. The store does not number the sequences an isoform ID has named over time. A `P38398-2.2`
+would be a name no publisher issued, which a caller could then write and nobody else resolve.
 
 A name with no version is not resolved by the provider. It answers a versioned name and refuses a bare one, unless the
 record has no version of its own. It also lists what it holds under a bare accession: the versions, newest first, or for
@@ -246,8 +265,9 @@ reader opens, and how it narrows, is the store's policy ([`store.md`](store.md#a
 - **A canonical that moves leaves its old name behind.** In release 2026_01 UniProt made `P08195-2` the canonical of
   P08195 in place of `P08195-1`, and the sequence version went from 3 to 4. Each isoform ID kept its sequence; the
   accession's did not. A citation of `P08195:p.…` written in 2025 meant the sequence now keyed `P08195-1`, but `P08195`
-  lists only `P08195.4`, and nothing in one release connects the two names. Connecting them needs UniProt's archive,
-  which a build does not read.
+  lists only `P08195.4`, and nothing in one release connects the two names. A shard cut from a 2025 release connects
+  them: stacked under the current one, it holds that sequence as `P08195.3`, so `P08195` lists both versions and weaver
+  reads the name on each. Which past releases a store stacks is the builder's caller's choice, as for every shard.
 - **Equivalence on these records is refused**, even between two spellings on one record, because weaver compares on the
   genome. Comparing on the record alone is weaver's to add
   ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
@@ -308,6 +328,15 @@ UniProt's web service answers `P38398-1` with BRCA1's canonical, and answers `-1
 that assigns no `-1`. Rejected because the release says otherwise for one entry in twenty: `P08195-1` is a non-canonical
 isoform with a sequence of its own, so keying the canonical under it would serve the wrong residues for a name that
 cites the isoform.
+
+### List an accession's isoforms with its versions
+
+Answer a bare `P08195` with every isoform ID the store holds under it, found by prefix in the index, so that a name
+written against an old canonical finds the isoform that now holds its sequence. Rejected for three reasons. weaver's
+contract lists versions of one accession, and an isoform ID is not one. The list would offer every isoform of every bare
+citation as a candidate, when 98% of those citations meant the canonical, and nothing in the list tells a caller which
+entry is the canonical. And it only works where the old canonical survived as an isoform; a sequence the entry dropped
+is found only in an older release. Stacking an older release's shard covers both cases, under names UniProt issued.
 
 ### Leave the format version alone, or raise it for every store
 
