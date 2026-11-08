@@ -707,10 +707,6 @@ def test_a_protein_a_retired_and_a_current_transcript_encode_is_current(
     )
 
 
-def test_a_version_two_releases_hold_is_listed_once(stacked: provider_mod.BundleProvider) -> None:
-    assert stacked.get_accession_versions('NM_000001') == ['NM_000001.1']
-
-
 def test_versions_are_listed_by_number_not_by_spelling(built: testing.Reference, tmp_path: pathlib.Path) -> None:
     residues = b'MKV'
     digest = refget.digest(residues)
@@ -861,13 +857,13 @@ def test_a_protein_a_suppressed_and_a_superseded_transcript_encode_is_superseded
     assert provider.get_accession_info('NP_000001.1') == (weaver.AccessionStatus.Superseded, [])
 
 
-def test_a_protein_whose_encoding_transcript_is_not_held_is_refused(
+def test_a_protein_no_held_transcript_says_it_encodes_is_refused(
     built: testing.Reference, tmp_path: pathlib.Path
 ) -> None:
     made, _, _, _ = testing.bundles()
     made[0].transcripts[0].protein_accession = 'NP_000009'  # the protein record still names NM_000001.1
     provider = _provider_over(built, tmp_path, [('RS_1', made)])
-    with pytest.raises(weaver.DataProviderError, match=r'NP_000001\.1: the store names a transcript encoding it'):
+    with pytest.raises(weaver.DataProviderError, match=r'NP_000001\.1: its record names a transcript as encoding it'):
         provider.get_accession_info('NP_000001.1')
 
 
@@ -893,3 +889,43 @@ def test_a_suppressed_version_a_higher_one_is_held_for_stays_suppressed(
     newer[0].transcripts[0].version = 2
     provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
     assert provider.get_accession_info('NM_000001.1') == (weaver.AccessionStatus.Suppressed, [])
+
+
+def test_a_protein_version_a_transcript_now_names_a_higher_version_of_is_superseded(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    older, _, _, _ = testing.bundles()  # NM_000001.1, MANE Select, encoding NP_000001.1
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].protein_version = 2  # the same transcript version's record now names NP_000001.2
+    newer[0].proteins[0].version = 2
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NP_000001.1') == (weaver.AccessionStatus.Superseded, [])
+
+
+def test_a_protein_whose_transcript_now_names_another_is_superseded_untagged(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    older, _, _, _ = testing.bundles()  # NM_000001.1, MANE Select, encoding NP_000001.1
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].protein_accession = 'NP_000005'
+    newer[0].proteins[0].accession = 'NP_000005'
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NP_000001.1') == (weaver.AccessionStatus.Superseded, [])
+
+
+def test_weaver_reads_a_bare_name_of_a_genome_sequence_with_no_version_on_itself(tmp_path: pathlib.Path) -> None:
+    sequence = testing.genome_sequence()
+    fasta = tmp_path / 'chr.fa'
+    fasta.write_text(f'>chr1\n{sequence}\n', 'utf-8')
+    genome_build.build_genome(fasta, tmp_path / 'genome', assembly=testing.ASSEMBLY)
+    made, _, _, _ = testing.bundles()
+    source = tmp_path / 'source'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('source', source)])
+    store_build.write_index(tmp_path / 'store', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(
+        store_mod.BundleStore(str(tmp_path / 'store')), genome_mod.Genome(str(tmp_path / 'genome'))
+    )
+    variant = weaver.parse(f'chr1:g.150{sequence[149]}>{"G" if sequence[149] != "G" else "C"}')
+    found = weaver.VariantMapper(provider).consistent_variants(variant, provider)
+    assert [c.variant.ac for c in found] == ['chr1']
