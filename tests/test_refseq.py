@@ -888,18 +888,18 @@ def _provider(
 
 def test_a_pseudoautosomal_transcript_is_modelled_on_the_chromosome_asked_for(tmp_path: pathlib.Path) -> None:
     provider = _provider(tmp_path)
-    assert provider.get_transcript('NM_000040.1', Y)['reference_accession'] == Y
-    assert provider.get_transcript('NM_000040.1', X)['reference_accession'] == X
+    assert provider.get_transcript('NM_000040.1', Y).get('reference_accession') == Y
+    assert provider.get_transcript('NM_000040.1', X).get('reference_accession') == X
 
 
 def test_a_transcript_also_on_a_patch_is_modelled_on_the_chromosome_when_none_is_named(
     tmp_path: pathlib.Path,
 ) -> None:
-    assert _provider(tmp_path).get_transcript('NM_000060.1', None)['reference_accession'] == CHROM
+    assert _provider(tmp_path).get_transcript('NM_000060.1', None).get('reference_accession') == CHROM
 
 
 def test_a_patch_a_transcript_is_placed_on_is_modelled_when_named(tmp_path: pathlib.Path) -> None:
-    assert _provider(tmp_path).get_transcript('NM_000060.1', PATCH)['reference_accession'] == PATCH
+    assert _provider(tmp_path).get_transcript('NM_000060.1', PATCH).get('reference_accession') == PATCH
 
 
 def test_a_transcript_on_an_alternate_locus_only_projects_to_that_locus(tmp_path: pathlib.Path) -> None:

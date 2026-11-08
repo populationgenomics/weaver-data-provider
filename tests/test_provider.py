@@ -34,8 +34,9 @@ def test_transcript_model_is_weaver_shaped(provider: provider_mod.BundleProvider
     model = provider.get_transcript('NM_000001.1', None)
     assert model['ac'] == 'NM_000001.1'
     assert model['gene'] == 'FWD'
-    assert model['strand'] == 1
-    assert model['reference_accession'] == testing.CHROM
+    assert model.get('strand') == 1
+    assert model.get('reference_accession') == testing.CHROM
+    assert 'exons' in model, 'the model is unplaced'
     (a, b) = model['exons']
     assert (a['transcript_start'], a['transcript_end'], a['reference_start'], a['reference_end']) == (0, 10, 100, 109)
     assert (b['transcript_start'], b['transcript_end'], b['reference_start'], b['reference_end']) == (10, 22, 200, 211)
