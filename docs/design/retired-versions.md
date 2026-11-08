@@ -124,6 +124,13 @@ a current transcript encodes is what today's release translates, whatever older 
 encoded by a replaced `NM_000001.1` and by a current `NM_000001.2` that changed only the UTR, is current, and is the
 MANE Select protein if `NM_000001.2` is MANE Select.
 
+A store may also stack past releases without the historical set, and then a version's own release may be all that speaks
+for it. That release called it current. A higher version of the same accession, held anywhere in the store, says
+otherwise: a publisher issues a new version only when it replaces the old one. So a version the store holds a higher
+version of is superseded, with no tags, whatever its release said; one recorded as suppressed stays suppressed. This
+infers nothing from absence, which Alternatives rejects; it reads a replacement the publisher stated by issuing the next
+version.
+
 ## Alternatives considered
 
 - **Infer status from the current annotation**: a version it names is current, one whose accession it names under a

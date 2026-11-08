@@ -771,3 +771,101 @@ def test_a_versioned_accession_lists_no_versions_under_it(provider: provider_mod
 @pytest.mark.parametrize('accession', ['NM_000001.9', 'NM_000001', 'NP_000001.9', 'NP_000001', 'P00009-2', 'FWD'])
 def test_a_name_naming_no_record_has_no_status(provider: provider_mod.BundleProvider, accession: str) -> None:
     assert provider.get_accession_info(accession) is None
+
+
+def _provider_over(
+    built: testing.Reference, tmp_path: pathlib.Path, releases: list[tuple[str, list[bundle_pb2.GeneBundle]]]
+) -> provider_mod.BundleProvider:
+    """A provider over shards of these bundles, stacked in the order given, oldest release first."""
+    source = tmp_path / 'source'
+    source.write_text('synthetic\n', 'utf-8')
+    shards = [
+        store_build.write_shard(bundles, tmp_path / 'shards', release=release, inputs=[('source', source)])
+        for release, bundles in releases
+    ]
+    store_build.write_index(tmp_path / 'store', shards, assembly=testing.ASSEMBLY)
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'store')), built.genome)
+
+
+def _canonical(version: int) -> bundle_pb2.GeneBundle:
+    """FWD's UniProt-shaped canonical P00001 at this sequence version, MKV, encoded by no transcript."""
+    digest = refget.digest(b'MKV')
+    return bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol='FWD'),
+        proteins=[bundle_pb2.Protein(accession='P00001', version=version, sequence_digest=digest)],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=b'MKV')],
+    )
+
+
+def test_a_version_a_later_release_replaced_is_superseded(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    provider = _provider_over(built, tmp_path, [('UP_1', [_canonical(3)]), ('UP_2', [_canonical(4)])])
+    found = weaver.VariantMapper(provider).consistent_variants(weaver.parse('P00001:p.Lys2Arg'), provider)
+    assert [(c.variant.ac, c.status) for c in found] == [
+        ('P00001.4', weaver.AccessionStatus.Current),
+        ('P00001.3', weaver.AccessionStatus.Superseded),
+    ]
+
+
+def test_a_version_a_later_release_replaced_loses_its_tags(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    older, _, _, _ = testing.bundles()  # NM_000001.1, MANE Select
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].version = 2
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NM_000001.1') == (weaver.AccessionStatus.Superseded, [])
+
+
+def test_a_versions_tags_are_the_newest_releases(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    older, _, _, _ = testing.bundles()  # NM_000001.1, MANE Select
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].tags[:] = [bundle_pb2.TAG_REFSEQ_SELECT]
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NM_000001.1') == (
+        weaver.AccessionStatus.Current,
+        [weaver.AccessionTag.RefSeqSelect],
+    )
+
+
+def _encoded_twice(
+    first: tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]],
+    second: tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]],
+) -> list[bundle_pb2.GeneBundle]:
+    """FWD's NP_000001.1 encoded by NM_000001.1 and NM_000003.1, with these statuses and tags."""
+    made, _, _, _ = testing.bundles()
+    fwd = made[0]
+    other = fwd.transcripts.add()
+    other.CopyFrom(fwd.transcripts[0])
+    other.accession = 'NM_000003'
+    for transcript, (status, tags) in zip(fwd.transcripts, (first, second), strict=True):
+        transcript.status = status
+        transcript.tags[:] = tags
+    return made
+
+
+def test_a_protein_carries_every_tag_of_the_transcripts_encoding_it(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    current = bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+    made = _encoded_twice((current, [bundle_pb2.TAG_REFSEQ_SELECT]), (current, [bundle_pb2.TAG_MANE_PLUS_CLINICAL]))
+    provider = _provider_over(built, tmp_path, [('RS_1', made)])
+    assert provider.get_accession_info('NP_000001.1') == (
+        weaver.AccessionStatus.Current,
+        [weaver.AccessionTag.ManePlusClinical, weaver.AccessionTag.RefSeqSelect],
+    )
+
+
+def test_a_protein_a_suppressed_and_a_superseded_transcript_encode_is_superseded(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made = _encoded_twice((bundle_pb2.TRANSCRIPT_STATUS_SUPPRESSED, []), (bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED, []))
+    provider = _provider_over(built, tmp_path, [('RS_1', made)])
+    assert provider.get_accession_info('NP_000001.1') == (weaver.AccessionStatus.Superseded, [])
+
+
+def test_a_protein_whose_encoding_transcript_is_not_held_is_refused(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    made[0].transcripts[0].protein_accession = 'NP_000009'  # the protein record still names NM_000001.1
+    provider = _provider_over(built, tmp_path, [('RS_1', made)])
+    with pytest.raises(weaver.DataProviderError, match=r'NP_000001\.1: the store names a transcript encoding it'):
+        provider.get_accession_info('NP_000001.1')

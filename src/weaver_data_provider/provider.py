@@ -50,6 +50,18 @@ _TAGS = {
 }
 
 
+def _status(ac: str, status: bundle_pb2.TranscriptStatus) -> weaver.AccessionStatus:
+    if status not in _STATUSES:
+        raise weaver.DataProviderError(f'{ac}: the store records status {status}, which this reader does not know')
+    return _STATUSES[status]
+
+
+def _tag(ac: str, tag: bundle_pb2.Tag) -> weaver.AccessionTag:
+    if tag not in _TAGS:
+        raise weaver.DataProviderError(f'{ac}: the store records tag {tag}, which this reader does not know')
+    return _TAGS[tag]
+
+
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
     return str(kind).lower()
 
@@ -314,10 +326,13 @@ class BundleProvider:
 
         A protein has the status and tags of the transcripts that encode it: the most current of their
         statuses, and every tag any carries. A protein no transcript encodes, a UniProt one, is current in
-        the release it came from and has no tags. A sequence of the genome has no status recorded, so None.
+        the release it came from and has no tags. A version the store also holds a higher version of has been
+        replaced, whatever its own release said, and so is superseded, with no tags, unless it was suppressed.
+        A sequence of the genome has no status recorded, so None.
 
         Raises:
-            weaver.DataProviderError: If the store records a transcript encoding a protein and holds none.
+            weaver.DataProviderError: If the store records a transcript encoding a protein and holds none, or
+                a status or tag this reader does not know.
         """
         if ac in self._genome:
             return None
@@ -327,22 +342,31 @@ class BundleProvider:
                 return None
             _, protein = found
             if not protein.transcript_accession:
-                return weaver.AccessionStatus.Current, []
-            return self._encoded_by(ac)
-        if '.' not in ac or not self._store.holds_transcript(ac):
-            return None
-        _, transcript = self._transcript(ac)
-        return _STATUSES[transcript.status], [_TAGS[t] for t in transcript.tags]
+                status, tags = bundle_pb2.TRANSCRIPT_STATUS_CURRENT, []
+            else:
+                status, tags = self._encoded_by(ac)
+        else:
+            try:
+                _, transcript = self._transcript(ac)
+            except weaver.DataProviderError:
+                return None
+            status, tags = transcript.status, sorted(transcript.tags)
+        base, _, version = ac.rpartition('.')
+        if version.isdigit() and self.get_accession_versions(base)[0] != ac:
+            if status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT:
+                status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+            tags = []
+        return _status(ac, status), [_tag(ac, t) for t in tags]
 
-    def _encoded_by(self, protein: str) -> tuple[weaver.AccessionStatus, list[weaver.AccessionTag]]:
+    def _encoded_by(self, protein: str) -> tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]]:
         """The combined status and tags of the transcripts encoding a versioned protein, each its newest record."""
         encoding = self.get_symbol_accessions(protein, 'p', 'c')
         if not encoding:
             raise weaver.DataProviderError(f'{protein}: the store names a transcript encoding it and holds none')
         transcripts = [self._transcript(ac)[1] for _, ac in encoding]
-        status = min((t.status for t in transcripts), key=list(_STATUSES).index)
-        tags = sorted({tag for t in transcripts for tag in t.tags})
-        return _STATUSES[status], [_TAGS[t] for t in tags]
+        statuses = {t.status for t in transcripts}
+        status = next((s for s in _STATUSES if s in statuses), min(statuses))
+        return status, sorted({tag for t in transcripts for tag in t.tags})
 
     # ---- refget ------------------------------------------------------------------------------------
 
