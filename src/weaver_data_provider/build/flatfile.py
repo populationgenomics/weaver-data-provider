@@ -16,7 +16,12 @@ from weaver_data_provider import build
 from weaver_data_provider.build import common
 from weaver_data_provider.v1 import bundle_pb2
 
-_ACCESSION = re.compile(r'^([A-Z]{2}_\d+)\.(\d+)$')
+# A versioned INSDC or RefSeq accession: `AAA73985.1`, `NP_009225.1`.
+_ACCESSION = re.compile(r'^[A-Z]+_?\d+\.\d+$')
+# Qualifiers saying a CDS's translation is not the conceptual translation of its bases.
+_EXCEPTIONS = frozenset(
+    {'/exception', '/transl_except', '/ribosomal_slippage', '/trans_splicing', '/artificial_location'}
+)
 _CDS_RANGE = re.compile(r'<?(\d+)\.\.>?(\d+)')
 _CDS_LOCATION = re.compile(rf'{_CDS_RANGE.pattern}|join\({_CDS_RANGE.pattern}(?:,{_CDS_RANGE.pattern})+\)')
 
@@ -31,8 +36,16 @@ class RecordCds:
     end_open: bool
 
 
-class CdsStatementError(build.BuildError):
+class UninterpretableError(build.BuildError):
+    """A record the reader takes no CDS from; a reader of an archive may leave it out rather than fail."""
+
+
+class CdsStatementError(UninterpretableError):
     """A record states its CDS in a form the reader does not interpret; the historical set leaves such a record out."""
+
+
+class CdsChoiceError(UninterpretableError):
+    """A record states no single CDS with its protein: several naming one, several naming none, or no translation."""
 
 
 @dataclasses.dataclass
@@ -43,9 +56,13 @@ class Record:
     protein_id: str | None = None  # the CDS's protein_id
     sequence: bytes | None = None
     protein: tuple[str, bytes] | None = None  # the CDS's protein_id and translation, when read for sequences
+    molecule: str = ''  # the LOCUS line's molecule type: `mRNA`, `DNA`, ...
+    joined: bool = False  # the CDS is a join of ranges, such as a programmed frameshift
+    codon_start: int = 1  # the CDS's first coding base, counted from its first base
+    exceptions: tuple[str, ...] = ()  # qualifiers saying the translation is not the bases' conceptual one
 
 
-def parse_cds(version: str, location: str) -> RecordCds:
+def _parse_cds(version: str, location: str) -> RecordCds:
     """One CDS location, `a..b` or a forward `join` of such ranges, either end possibly open.
 
     Raises:
@@ -82,13 +99,16 @@ class _CdsQualifiers:
     set, and buffering every translation would hold them all for nothing.
     """
 
-    def __init__(self, version: str, cds: RecordCds, *, protein: bool) -> None:
+    def __init__(self, version: str, cds: RecordCds, *, protein: bool, joined: bool) -> None:
         self.version = version
         self.cds = cds
+        self.joined = joined
         self._protein = protein
         self._lines: list[str] = []
         self.protein_id: str | None = None
         self.translation: str | None = None
+        self.codon_start = 1
+        self.exceptions: list[str] = []
 
     def add(self, line: str) -> None:
         text = line.strip()
@@ -105,7 +125,11 @@ class _CdsQualifiers:
         name = text.partition('=')[0]
         if name == '/codon_start' and text != '/codon_start=1' and not self.cds.start_open:
             raise CdsStatementError(f'{self.version}: a CDS with a closed start but {text}')
-        if name == '/protein_id':
+        if name in _EXCEPTIONS:
+            self.exceptions.append(name)
+        if name == '/codon_start':
+            self.codon_start = int(text.partition('=')[2])
+        elif name == '/protein_id':
             protein_id = _quoted(self.version, name, text)
             if _ACCESSION.match(protein_id) is None:
                 raise build.BuildError(f'{self.version}: protein_id {protein_id!r} is not a versioned accession')
@@ -125,12 +149,20 @@ class _CdsQualifiers:
         return self.protein_id, self.translation.encode('ascii')
 
 
-def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str] | None = None) -> dict[str, Record]:
+def read_records(
+    path: pathlib.Path,
+    *,
+    sequences: bool,
+    left_out: dict[str, str] | None = None,
+    leave_out: tuple[type[UninterpretableError], ...] = (CdsStatementError,),
+) -> dict[str, Record]:
     """Each GenBank record's CDS in its own coordinates and, when `sequences`, its sequence and protein.
 
-    With `left_out`, a record whose CDS statement the reader refuses — a location of another shape, a
-    closed start read from other than its first base, an open end that is not the record's — is left
-    out of the result and noted there by version with the reason, instead of failing the read.
+    With `left_out`, a record refused with one of the `leave_out` errors is left out of the result and
+    noted there by version with the reason, instead of failing the read. A `CdsStatementError` is a CDS
+    statement the reader refuses — a location of another shape, a closed start read from other than its
+    first base, an open end that is not the record's; a `CdsChoiceError`, a record with no single CDS
+    naming a protein and carrying its translation.
 
     A CDS written as a join — a programmed frameshift, `join(114..317,319..801)` — is taken by its outer
     bounds, the first and last coding bases, which is what c. numbering needs. The sequence is the
@@ -142,7 +174,7 @@ def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str
     Raises:
         build.BuildError: If a record states several CDS features naming a protein, or several and
             none naming one, a version appears twice, a CDS or an ORIGIN comes before any VERSION
-            line, a VERSION line has no accession, a location is of a shape `parse_cds`
+            line, a VERSION line has no accession, a location is of a shape `_parse_cds`
             refuses, a record is not closed by `//` before the next or before the file ends, a CDS
             with a closed start reads from other than its first base (`/codon_start` 2 or 3), which
             no start codon can do, or, when read for sequences, a record has no ORIGIN section or an
@@ -154,10 +186,12 @@ def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str
     qualifiers: _CdsQualifiers | None = None
     origin: list[str] | None = None
 
-    def refuse(error: CdsStatementError) -> None:
-        if left_out is None or version is None:
+    def refuse(error: UninterpretableError) -> None:
+        if left_out is None or version is None or not isinstance(error, leave_out):
             raise error
         left_out[version] = str(error)
+
+    molecule = ''
 
     with gzip.open(path, 'rt', encoding='utf-8') as fh:
         for line in fh:
@@ -174,6 +208,8 @@ def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str
                 if version is not None:
                     raise build.BuildError(f'{path}: {version} is not closed by // before the next record')
                 features = []
+                fields = line.split()
+                molecule = fields[4] if len(fields) > 4 and fields[3] == 'bp' else ''
             elif origin is not None and not line.startswith('//'):
                 origin.append(''.join(line.split()[1:]))
             elif line.startswith('VERSION'):
@@ -193,7 +229,10 @@ def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str
                         raise build.BuildError(f'{path}: ends inside the CDS location of {version}')
                     location += continued.strip()
                 try:
-                    qualifiers = _CdsQualifiers(version, parse_cds(version, location), protein=sequences)
+                    joined = location.startswith('join(')
+                    qualifiers = _CdsQualifiers(
+                        version, _parse_cds(version, location), protein=sequences, joined=joined
+                    )
                 except CdsStatementError as error:
                     refuse(error)
                 else:
@@ -209,8 +248,10 @@ def read_records(path: pathlib.Path, *, sequences: bool, left_out: dict[str, str
                 if left_out is None or version not in left_out:
                     try:
                         out[version] = _record(path, version, features, origin, sequences=sequences)
-                    except CdsStatementError as error:
+                    except UninterpretableError as error:
                         refuse(error)
+                    else:
+                        out[version].molecule = molecule
                 version, features, origin = None, [], None
     if version is not None:
         raise build.BuildError(f'{path}: ends inside the record of {version}, before its //')
@@ -225,12 +266,13 @@ def _record(
     Raises:
         CdsStatementError: If, read for sequences, the CDS lies outside the sequence or is open at an
             end that is not the sequence's.
-        build.BuildError: If the CDS features do not single one out, or, when read for sequences, the
-            record has no ORIGIN section or an empty one, or its CDS no protein id or translation.
+        CdsChoiceError: If the CDS features do not single one out, or, when read for sequences, the CDS
+            names no protein id or carries no translation.
+        build.BuildError: If, read for sequences, the record has no ORIGIN section or an empty one.
     """
     named = [f for f in features if f.protein_id is not None]
     if len(named) > 1 or (not named and len(features) > 1):
-        raise build.BuildError(
+        raise CdsChoiceError(
             f'{path}: {version} states {len(features)} CDS features, {len(named)} of them naming a protein'
         )
     chosen = named[0] if named else features[0] if features else None
@@ -238,6 +280,9 @@ def _record(
         cds=chosen.cds if chosen is not None else None,
         protein_id=chosen.protein_id if chosen is not None else None,
         protein=chosen.protein() if chosen is not None else None,
+        joined=chosen.joined if chosen is not None else False,
+        codon_start=chosen.codon_start if chosen is not None else 1,
+        exceptions=tuple(chosen.exceptions) if chosen is not None else (),
     )
     if not sequences:
         return record
@@ -247,7 +292,7 @@ def _record(
     record.sequence = residues
     if record.cds is not None:
         if record.protein is None:
-            raise build.BuildError(f'{path}: the CDS of {version} names no protein_id or carries no translation')
+            raise CdsChoiceError(f'{path}: the CDS of {version} names no protein_id or carries no translation')
         cds = record.cds
         message = bundle_pb2.Cds(
             start_index=cds.start, end_index_inclusive=cds.end, start_open=cds.start_open, end_open=cds.end_open
