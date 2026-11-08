@@ -82,7 +82,8 @@ def _read_records(paths: tuple[pathlib.Path, ...], left_out: collections.Counter
             if versioned in out:
                 raise build.BuildError(f'{path}: {versioned} is in an earlier file too')
         out.update(records)
-        left_out['a CDS the reader does not interpret'] += len(refused)
+        if refused:
+            left_out['a CDS the reader does not interpret'] += len(refused)
     return out
 
 
@@ -232,8 +233,8 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
             by_gene.setdefault(gene_id, (symbol, []))[1].append(versioned)
     bundled = sum(1 for v in kept if v in genes)
     print(
-        f'{release.release}: {len(records) + left_out["a CDS the reader does not interpret"]} records, '
-        f'{bundled} bundled in {len(by_gene)} genes; left out: {common.counted(left_out)}',
+        f'{release.release}: {bundled + left_out.total()} records, {bundled} bundled in {len(by_gene)} genes; '
+        f'left out: {common.counted(left_out)}',
         file=sys.stderr,
     )
     hgnc = common.read_hgnc(release.hgnc, 'entrez_id')
