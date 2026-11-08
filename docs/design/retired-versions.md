@@ -107,11 +107,15 @@ summary names current versions only. A retired version is bundled with neither, 
 recommendations that hold. A version the table calls live but the release above does not annotate keeps the tags the
 anchor release gave it; whether they still hold is not a fact the set states.
 
-For the same reason the provider's region lookup lists current transcripts only. A retired version is served when named
-— that is the shard's purpose — but a caller asking "which transcripts are here" is asking about today's annotation, and
-the historical shard would otherwise answer with a decade of replaced models for every gene. The consequence for a
-caller through weaver: it learns a version is retired only by not finding it in a region's answer, since weaver's
-transcript model has no status field; the status is readable from the bundle.
+For the same reason the provider lists current transcripts only when a caller asks which transcripts there are, over a
+region or for a gene. A retired version is served when named — that is the shard's purpose — but "which transcripts are
+here" asks about today's annotation, and the historical shard would otherwise answer with a decade of replaced models
+for every gene. hgvs-weaver 2.0 can carry a version's status to the caller, through a catalogue the provider implements
+([#19](https://github.com/populationgenomics/weaver-data-provider/issues/19)), so a caller passing one could filter for
+itself; a caller without one sees no status at all. Leaving retired versions out is therefore the default, which a
+caller can widen when it constructs the provider. The filter, and the gene lookups' joining it, are set out with the
+publishers it also covers in
+[`genbank-and-uniprot.md`](genbank-and-uniprot.md#a-genes-answer-lists-the-reference-publishers-current-records).
 
 ## Alternatives considered
 
@@ -143,16 +147,14 @@ transcript model has no status field; the status is readable from the bundle.
   agree, and wrong for 38,000 historical transcripts, each of which would then project its variants onto another
   version's protein.
 
-- **List every version in a region's answer and let the caller filter by status.** The caller through weaver receives
-  bare accessions and a transcript model with no status field, so it could not filter; it would meet a decade of
-  replaced models for every gene with no way to tell them from the current ones.
+- **List every version in a region's or a gene's answer and let the caller filter by status.** Rejected as the default:
+  only a caller that passes weaver a catalogue sees status, and every other caller would meet a decade of replaced
+  models for every gene with no way to tell them from the current ones. A caller that reads status can ask for them.
 
 ## Open questions
 
 - Whether the bundle should carry the successor Entrez names for a replaced version, so a caller could offer the current
   model's answer beside the retired one. The table carries the successor; the bundle does not.
-- Whether a version's status should reach a caller through weaver, in the transcript model or beside it, so that a
-  region's answer could list retired versions after all and let the caller decide.
 - A store that stacks the historical set under GRCh38 but has nothing comparable for GRCh37 answers the same old name on
   one assembly and not the other. Whether the GRCh37 store should say so, rather than "not in the reference data", is
   open.

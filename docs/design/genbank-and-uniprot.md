@@ -23,8 +23,10 @@ The decision is to **serve these records for what they state, and never to place
   that is its policy.
 - **Each publisher is a shard of its own, with no placements.** It stacks under any store's index, GRCh37 or GRCh38,
   like the historical set does, and the inputs given to the build decide which records it holds.
-- **These records are found by accession, never by gene.** A gene's transcripts and proteins, as weaver enumerates them
-  for a name that cites only a gene, stay the reference publishers' records.
+- **A gene's answer lists the reference publishers' current records, by default.** These records are keyed under their
+  gene like any other, but the transcripts and proteins the provider lists for a name that cites only a gene are
+  RefSeq's and Ensembl's current ones, as a region's answer already is. A GenBank or UniProt record is found when a name
+  cites it. A caller can widen the filter when it constructs the provider.
 - **Versions are stored as published, and a bare accession is not resolved by the provider.** A UniProt name almost
   never carries a version. The provider lists the versions it holds; weaver reads the name on each
   ([hgvs-weaver#145](https://github.com/populationgenomics/hgvs-weaver/issues/145)), and choosing among them is the
@@ -152,6 +154,11 @@ Which records a shard holds is decided by the files the build is given, and the 
 - **UniProt:** one release's reviewed human entries with their isoforms, and, if the caller also gives it, the release's
   unreviewed entries, which add about 127 thousand entries to the 20 thousand reviewed.
 
+Each shard also records its publisher, so the provider can tell a record's publisher from the shard it came from, and a
+deployment that wants only some publishers can index only their shards. An index is about a tenth to a fifth of the size
+of the shards it covers, and shards are shared files that several indexes can name, so a store limited to RefSeq and
+Ensembl beside one holding everything costs one more index and no copied shards.
+
 ### What each publisher's record becomes
 
 | Record                        | Stored as                                    | Notes                                               |
@@ -185,16 +192,36 @@ Two cases depart from one record per gene:
 - **A record naming no gene is left out, counted.** Guessing a gene from a symbol in free text would be the publisher's
   statement made up.
 
-### Found by accession, never by gene
+### A gene's answer lists the reference publishers' current records
 
-A name that cites only a gene, `BRCA1:c.68_69del`, has weaver try each of the gene's transcripts. Those are the gene's
-reference transcripts: RefSeq's and Ensembl's. A GenBank mRNA joining them would add a candidate weaver cannot place,
-and a historical sequence nobody meant. A UniProt protein joining the gene's proteins would add a second name for a
-sequence the list already holds.
+A name that cites only a gene, `BRCA1:c.68_69delAG`, has weaver ask the provider for the gene's transcripts, read the
+name on each, and return every reading consistent with its sequence, with each one's status and tags. Which records go
+in that list is the provider's to decide, and the index keys every bundle under its gene, these included. The provider
+lists RefSeq's and Ensembl's current records, the same filter its region lookup already applies
+([`retired-versions.md`](retired-versions.md)). Two properties of the records left out make that the right default.
 
-So these records are not found by gene. The index does not key their bundles under gene symbols. They are found by
-transcript accession, protein accession and digest only. The gene each belongs to is still recorded, so a caller holding
-`U14680.1` can ask whose it is.
+- **The list would depend on what the build read.** A GenBank shard holds whatever records it was given. NCBI has 220
+  human GenBank mRNAs for BRCA1, most of them partial cDNAs and clones, and many of the older ones carry sequencing
+  errors. With the nine reference standards, `BRCA1:c.68_69delAG` would gain one reading on `U14680.1`; with every human
+  mRNA, dozens. The same name would answer differently depending on the build's inputs, which no reference publisher's
+  shard makes it do.
+- **A caller could not remove them afterwards.** weaver's readings carry status and tags but no publisher. A GenBank or
+  UniProt reading is current with no tags, indistinguishable from an untagged RefSeq or Ensembl one, and once the kind
+  of an accession comes from the store, its prefix is no guide either. A retired version is distinguishable, by its
+  status, but only to a caller that passes weaver a catalogue; without one, status is absent.
+
+The asymmetry decides it. A record left out by default is still found by a name that cites it, and a caller that wants
+more widens the filter when it constructs the provider: which publishers a gene's answer lists, and whether retired
+versions are among them. A record put in by default could not be taken out. The protocol weaver reads is unchanged
+either way.
+
+Widening has consequences the caller takes on. A UniProt canonical is the MANE Select protein for about 91% of genes, so
+it mostly adds a second reading of residues already listed; its displayed isoform ID is a second key for the same
+record, and is not listed. A GenBank transcript changes weaver's errors: for a name that needs the genome, such as
+`c.4096+1G>A`, a record with no placement that might have been consistent turns an empty answer into weaver's
+`UnsupportedOperationError`, which names the missing placement.
+
+The gene each record belongs to is recorded either way, so a caller holding `U14680.1` can ask whose it is.
 
 ### Identity across publishers is the digest
 
@@ -247,11 +274,13 @@ protein, a sequence of the genome is genomic.
 ### A store holding these shards is format version 2
 
 A reader of the current format decides an accession's kind by its prefix. From a store holding `U14680.1` it would
-answer that the record is not in the reference data, which is an answer, and false. So a store with GenBank or UniProt
-shards is stamped format version 2, which the readers deployed so far refuse at open, and a store with only RefSeq and
-Ensembl shards stays at version 1, which they still read. Each shard records when it is cut whether it needs version 2,
-so the index builder takes the stamp from its shards rather than from a list of publishers. The range of versions a
-reader opens, and how it narrows, is the store's policy ([`store.md`](store.md#a-store-is-files-and-it-opens-once)).
+answer that the record is not in the reference data, which is an answer, and false. It would also list GenBank and
+UniProt records in every gene's answer, since it has no filter for them. So a store with GenBank or UniProt shards is
+stamped format version 2, which the readers deployed so far refuse at open, and a store with only RefSeq and Ensembl
+shards stays at version 1, which they still read. Each shard records when it is cut whether it needs version 2, beside
+its publisher, so the index builder takes the stamp from its shards rather than from a list of publishers. The range of
+versions a reader opens, and how it narrows, is the store's policy
+([`store.md`](store.md#a-store-is-files-and-it-opens-once)).
 
 ### Consequences
 
@@ -272,6 +301,9 @@ reader opens, and how it narrows, is the store's policy ([`store.md`](store.md#a
   genome. Comparing on the record alone is weaver's to add
   ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
 - **A store's key and interval tables are unchanged in shape.** The new records add keys, and no intervals.
+- **A gene's answer stops listing retired versions.** The provider's gene lookups today list every version the
+  historical shard holds, although its region lookup lists current ones only. The shared filter makes them agree, which
+  changes what a 0.1 caller gets for a name that cites only a gene.
 
 ## Alternatives considered
 
@@ -344,11 +376,26 @@ Leaving it alone lets a current reader answer "not in the reference data" for re
 every store refuses RefSeq-only stores that current readers read correctly, and makes every deployed reader upgrade for
 a change most stores do not carry.
 
-### Find these records by gene too
+### List every publisher's records in a gene's answer
 
-List a gene's GenBank mRNAs and UniProt proteins with its RefSeq and Ensembl ones. Rejected for the reasons under
-[Found by accession, never by gene](#found-by-accession-never-by-gene): a name citing only a gene means the gene's
-reference sequences, and every extra candidate is one more way for weaver to answer with a sequence nobody meant.
+List a gene's GenBank mRNAs, UniProt proteins and retired versions with its current RefSeq and Ensembl records, and let
+the caller choose among weaver's readings. Rejected for the reasons under
+[A gene's answer lists the reference publishers' current records](#a-genes-answer-lists-the-reference-publishers-current-records):
+the list would vary with the build's inputs, and a caller could not take GenBank and UniProt readings out of it.
+
+### Leave these records out of the index's gene keys
+
+Have the index builder skip gene keys for GenBank and UniProt bundles, so they cannot be found by gene at all. This was
+the first form of this design. Rejected because it puts a policy in the files: a caller who wants these records listed
+would need a different index, and the rule would differ from the region lookup's, which keys every placement and leaves
+the choice to the provider.
+
+### Give weaver's readings a publisher
+
+Add the publisher to what weaver reports for each reading, as a tag or a field, so that every record could be listed and
+a caller could filter. Not taken: it is a change to weaver for every provider, and it would list noise by default in
+order to make it removable, the reverse of the region lookup's rule. The construction-time filter gives the caller the
+same choice with no change to weaver.
 
 ### Separate stores
 
