@@ -36,6 +36,19 @@ _PUBLISHERS = frozenset(bundle_pb2.Publisher.values()) - {bundle_pb2.PUBLISHER_U
 _DIGEST_PREFERENCE = {bundle_pb2.PUBLISHER_REFSEQ: 0, bundle_pb2.PUBLISHER_ENSEMBL: 0, bundle_pb2.PUBLISHER_GENBANK: 1}
 _UNRANKED = len(_DIGEST_PREFERENCE)
 
+# Most current first: a protein encoded by transcripts of several statuses has the first of theirs.
+_STATUSES = {
+    bundle_pb2.TRANSCRIPT_STATUS_CURRENT: weaver.AccessionStatus.Current,
+    bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED: weaver.AccessionStatus.Superseded,
+    bundle_pb2.TRANSCRIPT_STATUS_SUPPRESSED: weaver.AccessionStatus.Suppressed,
+}
+_TAGS = {
+    bundle_pb2.TAG_MANE_SELECT: weaver.AccessionTag.ManeSelect,
+    bundle_pb2.TAG_MANE_PLUS_CLINICAL: weaver.AccessionTag.ManePlusClinical,
+    bundle_pb2.TAG_REFSEQ_SELECT: weaver.AccessionTag.RefSeqSelect,
+    bundle_pb2.TAG_ENSEMBL_CANONICAL: weaver.AccessionTag.EnsemblCanonical,
+}
+
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
     return str(kind).lower()
@@ -49,7 +62,7 @@ def _sequence(bundle: bundle_pb2.GeneBundle, digest: str) -> bytes:
 
 
 class BundleProvider:
-    """A `weaver.DataProvider` (and `Refget`, `TranscriptSearch`) over one assembly's store and genome.
+    """A `weaver.DataProvider` (and `Refget`, `TranscriptSearch`, `AccessionCatalogue`) over a store and genome.
 
     Every record the store holds is served when a name cites it. The transcripts and proteins listed for a
     gene, and the transcripts listed over a region, are by default RefSeq's and Ensembl's current ones: a
@@ -164,12 +177,19 @@ class BundleProvider:
     def _is_protein(self, accession: str) -> bool:
         return self.get_identifier_type(accession) == weaver.IdentifierType.ProteinAccession
 
+    def _protein(self, accession: str) -> tuple[bundle_pb2.GeneBundle, bundle_pb2.Protein] | None:
+        """The newest release's record of the protein so named, or None where none is."""
+        for bundle in reversed(self._store.by_protein(accession)):
+            for protein in bundle.proteins:
+                if store_mod.protein_name(protein) == accession:
+                    return bundle, protein
+        return None
+
     def _residues(self, accession: str) -> bytes:
         if self._is_protein(accession):
-            for bundle in reversed(self._store.by_protein(accession)):
-                for protein in bundle.proteins:
-                    if store_mod.protein_name(protein) == accession:
-                        return _sequence(bundle, protein.sequence_digest)
+            if (found := self._protein(accession)) is not None:
+                bundle, protein = found
+                return _sequence(bundle, protein.sequence_digest)
             if '.' not in accession and self._store.holds_protein(accession):
                 raise weaver.DataProviderError(
                     f'{accession}: a protein is held per version; give the versioned accession'
@@ -269,6 +289,61 @@ class BundleProvider:
                     found[f'{transcript.accession}.{transcript.version}'] = None
         return list(found)
 
+    # ---- accession catalogue -----------------------------------------------------------------------
+
+    def get_accession_versions(self, ac: str) -> list[str]:
+        """Every versioned name held under the unversioned `ac`, highest version first; a record with none, `ac`.
+
+        A version is listed whatever its status or publisher: a name that cites the accession cites every
+        version held, and `get_accession_info` gives each one's status for the caller to choose by. A name
+        with a version of its own, or one nothing is held under, lists nothing.
+        """
+        held: dict[str, int] = {}
+        for name in self._genome.names:
+            base, _, version = name.rpartition('.')
+            if base == ac and version.isascii() and version.isdigit():
+                held[name] = int(version)
+        for bundle in self._store.by_accession(ac):
+            held.update((f'{t.accession}.{t.version}', t.version) for t in bundle.transcripts if t.accession == ac)
+        for bundle in self._store.by_protein(ac):
+            held.update((store_mod.protein_name(p), p.version) for p in bundle.proteins if p.accession == ac)
+        return sorted(held, key=lambda name: held[name], reverse=True)
+
+    def get_accession_info(self, ac: str) -> tuple[weaver.AccessionStatus, list[weaver.AccessionTag]] | None:
+        """The status and tags of the record `ac` names, from the newest release holding it; None where none is.
+
+        A protein has the status and tags of the transcripts that encode it: the most current of their
+        statuses, and every tag any carries. A protein no transcript encodes, a UniProt one, is current in
+        the release it came from and has no tags. A sequence of the genome has no status recorded, so None.
+
+        Raises:
+            weaver.DataProviderError: If the store records a transcript encoding a protein and holds none.
+        """
+        if ac in self._genome:
+            return None
+        if self._is_protein(ac):
+            found = self._protein(ac)
+            if found is None:
+                return None
+            _, protein = found
+            if not protein.transcript_accession:
+                return weaver.AccessionStatus.Current, []
+            return self._encoded_by(ac)
+        if '.' not in ac or not self._store.holds_transcript(ac):
+            return None
+        _, transcript = self._transcript(ac)
+        return _STATUSES[transcript.status], [_TAGS[t] for t in transcript.tags]
+
+    def _encoded_by(self, protein: str) -> tuple[weaver.AccessionStatus, list[weaver.AccessionTag]]:
+        """The combined status and tags of the transcripts encoding a versioned protein, each its newest record."""
+        encoding = self.get_symbol_accessions(protein, 'p', 'c')
+        if not encoding:
+            raise weaver.DataProviderError(f'{protein}: the store names a transcript encoding it and holds none')
+        transcripts = [self._transcript(ac)[1] for _, ac in encoding]
+        status = min((t.status for t in transcripts), key=list(_STATUSES).index)
+        tags = sorted({tag for t in transcripts for tag in t.tags})
+        return _STATUSES[status], [_TAGS[t] for t in tags]
+
     # ---- refget ------------------------------------------------------------------------------------
 
     def get_refget_accession(self, ac: str) -> str | None:
@@ -277,11 +352,8 @@ class BundleProvider:
             return self._genome.digest(ac)
         try:
             if self._is_protein(ac):
-                for bundle in reversed(self._store.by_protein(ac)):
-                    for protein in bundle.proteins:
-                        if store_mod.protein_name(protein) == ac:
-                            return protein.sequence_digest
-                return None
+                found = self._protein(ac)
+                return found[1].sequence_digest if found is not None else None
             _, transcript = self._transcript(ac)
         except weaver.DataProviderError:
             return None

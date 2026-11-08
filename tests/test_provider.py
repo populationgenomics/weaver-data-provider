@@ -641,3 +641,133 @@ def test_a_bare_name_in_the_shape_of_a_uniprot_accession_the_store_does_not_hold
     provider: provider_mod.BundleProvider,
 ) -> None:
     assert provider.get_identifier_type('H2AZP1') == weaver.IdentifierType.Unknown  # an HGNC pseudogene's symbol
+
+
+# ---- the accession catalogue ---------------------------------------------------------------------
+
+
+def _fwd_c1(accession: str) -> weaver.Variant:
+    """A substitution of c.1 on FWD's transcript, its reference base the genome's."""
+    ref = _base(testing.genome_sequence(), testing.FWD_CDS[0])
+    return weaver.parse(f'{accession}:c.1{ref}>{"G" if ref != "G" else "C"}')
+
+
+def test_weaver_reads_a_bare_transcript_accession_on_each_version_held_newest_first(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    found = weaver.VariantMapper(provider).consistent_variants(_fwd_c1('NM_000001'), provider)
+    assert [c.variant.ac for c in found] == ['NM_000001.2', 'NM_000001.1']
+
+
+def test_each_version_weaver_reads_a_bare_accession_on_carries_its_status(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    found = weaver.VariantMapper(provider).consistent_variants(_fwd_c1('NM_000001'), provider)
+    assert [c.status for c in found] == [weaver.AccessionStatus.Current, weaver.AccessionStatus.Superseded]
+
+
+def test_a_transcript_carries_the_tags_its_record_has(provider: provider_mod.BundleProvider) -> None:
+    (found,) = weaver.VariantMapper(provider).consistent_variants(_fwd_c1('NM_000001.1'), provider)
+    assert found.tags == [weaver.AccessionTag.ManeSelect]
+
+
+def test_weaver_reads_a_bare_protein_accession_on_the_version_held(provider: provider_mod.BundleProvider) -> None:
+    found = weaver.VariantMapper(provider).consistent_variants(weaver.parse('NP_000001:p.Lys2Arg'), provider)
+    assert [c.variant.ac for c in found] == ['NP_000001.1']
+
+
+def test_a_protein_carries_the_tags_of_the_transcript_encoding_it(provider: provider_mod.BundleProvider) -> None:
+    (found,) = weaver.VariantMapper(provider).consistent_variants(weaver.parse('NP_000001.1:p.Lys2Arg'), provider)
+    assert found.tags == [weaver.AccessionTag.ManeSelect]
+
+
+def test_a_protein_a_retired_and_a_current_transcript_encode_is_current_with_the_current_ones_tags(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    fwd = made[0]
+    retired = fwd.transcripts[0]  # the protein record names this one as its transcript
+    retired.status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+    del retired.tags[:]
+    current = fwd.transcripts.add()
+    current.CopyFrom(retired)
+    current.version = 2
+    current.status = bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+    current.tags.append(bundle_pb2.TAG_MANE_SELECT)
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'shared', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'shared')), built.genome)
+    assert provider.get_accession_info('NP_000001.1') == (
+        weaver.AccessionStatus.Current,
+        [weaver.AccessionTag.ManeSelect],
+    )
+
+
+def test_a_version_two_releases_hold_is_listed_once(stacked: provider_mod.BundleProvider) -> None:
+    assert stacked.get_accession_versions('NM_000001') == ['NM_000001.1']
+
+
+def test_versions_are_listed_by_number_not_by_spelling(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    residues = b'MKV'
+    digest = refget.digest(residues)
+    bundle = bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol='FWD'),
+        proteins=[bundle_pb2.Protein(accession='P00001', version=v, sequence_digest=digest) for v in (9, 10)],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=residues)],
+    )
+    source = tmp_path / 'entries.dat'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard([bundle], tmp_path / 'shards', release='UP_1', inputs=[('entries', source)])
+    store_build.write_index(tmp_path / 'canonical', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'canonical')), built.genome)
+    assert provider.get_accession_versions('P00001') == ['P00001.10', 'P00001.9']
+
+
+@pytest.fixture
+def isoform(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """A UniProt-shaped shard holding FWD's isoform P00001-2, MKV, which has no version of its own."""
+    store_build.write_index(
+        tmp_path / 'isoform', [_isoform_release(tmp_path, 'UP_1', b'MKV')], assembly=testing.ASSEMBLY
+    )
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'isoform')), built.genome)
+
+
+def test_weaver_reads_a_name_with_no_version_of_its_own_on_itself(isoform: provider_mod.BundleProvider) -> None:
+    found = weaver.VariantMapper(isoform).consistent_variants(weaver.parse('P00001-2:p.Lys2Arg'), isoform)
+    assert [c.variant.ac for c in found] == ['P00001-2']
+
+
+def test_a_protein_no_transcript_encodes_is_current_with_no_tags(isoform: provider_mod.BundleProvider) -> None:
+    (found,) = weaver.VariantMapper(isoform).consistent_variants(weaver.parse('P00001-2:p.Lys2Arg'), isoform)
+    assert (found.status, found.tags) == (weaver.AccessionStatus.Current, [])
+
+
+def test_weaver_reads_a_bare_chromosome_accession_on_the_genomes_version(
+    provider: provider_mod.BundleProvider,
+) -> None:
+    ref = _base(testing.genome_sequence(), 150)
+    variant = weaver.parse(f'NC_000099:g.150{ref}>{"G" if ref != "G" else "C"}')
+    found = weaver.VariantMapper(provider).consistent_variants(variant, provider)
+    assert [c.variant.ac for c in found] == [testing.CHROM]
+
+
+def test_a_chromosome_has_no_status(provider: provider_mod.BundleProvider) -> None:
+    assert provider.get_accession_info(testing.CHROM) is None
+
+
+def test_a_bare_accession_nothing_is_held_under_is_weavers_error(provider: provider_mod.BundleProvider) -> None:
+    with pytest.raises(weaver.DataProviderError, match='no version of NM_999999 is held'):
+        weaver.VariantMapper(provider).consistent_variants(_fwd_c1('NM_999999'), provider)
+
+
+def test_a_versioned_accession_lists_no_versions_under_it(provider: provider_mod.BundleProvider) -> None:
+    assert provider.get_accession_versions('NM_000001.1') == []
+
+
+@pytest.mark.parametrize('accession', ['NM_000001.9', 'NM_000001', 'NP_000001.9', 'NP_000001', 'P00009-2', 'FWD'])
+def test_a_name_naming_no_record_has_no_status(provider: provider_mod.BundleProvider, accession: str) -> None:
+    assert provider.get_accession_info(accession) is None

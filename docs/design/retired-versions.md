@@ -110,12 +110,19 @@ anchor release gave it; whether they still hold is not a fact the set states.
 For the same reason the provider lists current transcripts only when a caller asks which transcripts there are, over a
 region or for a gene. A retired version is served when named — that is the shard's purpose — but "which transcripts are
 here" asks about today's annotation, and the historical shard would otherwise answer with a decade of replaced models
-for every gene. hgvs-weaver 2.0 can carry a version's status to the caller, through a catalogue the provider implements
-([#19](https://github.com/populationgenomics/weaver-data-provider/issues/19)), so a caller passing one could filter for
-itself; a caller without one sees no status at all. Leaving retired versions out is therefore the default, which a
-caller can widen when it constructs the provider. The filter, and the gene lookups' joining it, are set out with the
-publishers it also covers in
+for every gene. hgvs-weaver 2.0 carries a version's status to the caller, through a catalogue the provider implements,
+so a caller passing one could filter for itself; a caller without one sees no status at all. Leaving retired versions
+out is therefore the default, which a caller can widen when it constructs the provider. The filter, and the gene
+lookups' joining it, are set out with the publishers it also covers in
 [`genbank-and-uniprot.md`](genbank-and-uniprot.md#a-genes-answer-lists-the-reference-publishers-current-records).
+
+A name that cites an accession without a version is different: it names this accession and no other, so the catalogue
+lists every version held under it, retired ones included, newest first, and gives each one's status and tags. weaver
+reads the name on each, and the caller, who now sees the status, chooses. A protein has no status of its own in the
+bundle; it takes the most current status of the transcripts that encode it, and every tag any of them carries. A protein
+a current transcript encodes is what today's release translates, whatever older versions also encoded it: `NP_000001.1`,
+encoded by a replaced `NM_000001.1` and by a current `NM_000001.2` that changed only the UTR, is current, and is the
+MANE Select protein if `NM_000001.2` is MANE Select.
 
 ## Alternatives considered
 
