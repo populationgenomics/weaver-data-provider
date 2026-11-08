@@ -33,8 +33,8 @@ def validated(message: proto_message.Message, what: str) -> None:
     """Check a record against its proto's constraints before it is written.
 
     Raises:
-        BuildError: Naming every violated field, the rule it broke and the value that broke it, since
-            protovalidate's own message names only the message type.
+        BuildError: Naming every violated field, the rule it broke and the value that broke it, where
+            protovalidate's own message gives the first violation and a count of the rest.
     """
     try:
         protovalidate.validate(message)
