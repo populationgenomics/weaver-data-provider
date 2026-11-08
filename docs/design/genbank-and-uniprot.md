@@ -214,11 +214,13 @@ more widens the filter when it constructs the provider: which publishers a gene'
 versions are among them. A record put in by default could not be taken out. The protocol weaver reads is unchanged
 either way.
 
-Widening has consequences the caller takes on. A UniProt canonical is the MANE Select protein for about 91% of genes, so
-it mostly adds a second reading of residues already listed; its displayed isoform ID is a second key for the same
-record, and is not listed. A GenBank transcript changes weaver's errors: for a name that needs the genome, such as
-`c.4096+1G>A`, a record with no placement that might have been consistent turns an empty answer into weaver's
-`UnsupportedOperationError`, which names the missing placement.
+Widening has consequences the caller takes on. A gene's proteins are those its listed transcripts encode, so a UniProt
+protein, which no transcript encodes, is listed only once UniProt proteins carry their publisher, which comes with their
+shard. A UniProt canonical is the MANE Select protein for about 91% of genes, so listing it mostly adds a second reading
+of residues already listed; its displayed isoform ID is a second key for the same record, and is not listed. A GenBank
+transcript changes weaver's errors: for a name that needs the genome, such as `c.4096+1G>A`, a record with no placement
+that might have been consistent turns an empty answer into weaver's `UnsupportedOperationError`, which names the missing
+placement.
 
 The gene each record belongs to is recorded either way, so a caller holding `U14680.1` can ask whose it is.
 
@@ -268,7 +270,9 @@ shard was cut from, and has no MANE or Select tag.
 The provider decides whether an accession is a genomic sequence, a transcript or a protein from a fixed list of
 prefixes. That list cannot name GenBank or UniProt accessions, which follow no prefix scheme a reader could rely on. The
 provider instead asks its key tables: an accession held as a transcript is a transcript, one held as a protein is a
-protein, a sequence of the genome is genomic.
+protein, a sequence of the genome is genomic. An accession the store does not hold is still the kind its reference
+namespace says, `NM_` a transcript and `NP_` a protein, so a name citing a version no release held is answered "not in
+the reference data" rather than refused as an unknown name.
 
 ### A store holding these shards is format version 2
 
