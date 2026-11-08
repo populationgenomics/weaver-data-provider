@@ -133,8 +133,15 @@ class BundleProvider:
             ],
         }
 
-    def _residues(self, accession: str) -> bytes:
-        if self._store.holds_protein(accession):
+    def _is_protein(self, accession: str, kind: str | weaver.IdentifierType | None = None) -> bool:
+        """Whether to read an accession as a protein: as weaver names its kind, else as `get_identifier_type` does."""
+        name = _kind_name(kind) if kind is not None else ''
+        if 'protein' in name or 'transcript' in name:
+            return 'protein' in name
+        return self.get_identifier_type(accession) == weaver.IdentifierType.ProteinAccession
+
+    def _residues(self, accession: str, kind: str | weaver.IdentifierType) -> bytes:
+        if self._is_protein(accession, kind):
             for bundle in reversed(self._store.by_protein(accession)):
                 for protein in bundle.proteins:
                     if f'{protein.accession}.{protein.version}' == accession:
@@ -149,7 +156,7 @@ class BundleProvider:
             return self._genome.fetch(ac, start, end)
         if 'genomic' in _kind_name(kind):
             raise weaver.DataProviderError(f'{ac}: not a sequence of this genome')
-        residues = self._residues(ac)
+        residues = self._residues(ac, kind)
         start = max(start, 0)
         return residues[start:].decode('ascii') if end is None or end < 0 else residues[start:end].decode('ascii')
 
@@ -235,7 +242,7 @@ class BundleProvider:
         if ac in self._genome:
             return self._genome.digest(ac)
         try:
-            if self._store.holds_protein(ac):
+            if self._is_protein(ac):
                 for bundle in self._store.by_protein(ac):
                     for protein in bundle.proteins:
                         if f'{protein.accession}.{protein.version}' == ac:

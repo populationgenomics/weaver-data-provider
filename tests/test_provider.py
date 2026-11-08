@@ -344,6 +344,14 @@ def test_a_protein_with_no_reference_prefix_has_its_digest(with_genbank: provide
     assert with_genbank.get_refget_accession('AAA00001.1') == refget.digest(GENBANK_PROTEIN.encode())
 
 
+@pytest.mark.parametrize('protein', ['NP_999999', 'NP_999999.1'])
+def test_a_protein_the_store_does_not_hold_is_not_in_the_reference_data(
+    provider: provider_mod.BundleProvider, protein: str
+) -> None:
+    with pytest.raises(weaver.DataProviderError, match='not in the reference data'):
+        provider.get_seq(protein, 0, None, weaver.IdentifierType.ProteinAccession)
+
+
 def test_an_unplaced_transcript_is_given_without_a_placement_whatever_genome_is_asked_for(
     with_genbank: provider_mod.BundleProvider,
 ) -> None:
