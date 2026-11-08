@@ -211,6 +211,14 @@ against it at open and refuses a mismatch, so an index rebuilt in place and inte
 index, fails loudly instead of answering the wrong gene. Object stores report these digests in metadata, so on `gs://`
 the check is a metadata read, not a download.
 
+**A reader opens a range of format versions, and the range narrows only in a major release.** A store is stamped with
+the lowest version that reads it correctly, never below the oldest the builder's own package supports; a reader opens
+any version from that oldest to the newest it knows. Most changes need no new version: a field added with a default that
+means "as before" is read the same by every reader. A change in what existing bytes mean needs one, and a branch on the
+version in the reader. Those branches are the cost of the range, so raising its floor deletes them, and is a major
+release of this package: a store in a bucket this repo does not own becomes unreadable by newer readers, and the refusal
+names the last package version that reads it. The store can be rebuilt, because its manifest names each input by digest.
+
 ### Releases stack as shards behind one index
 
 A publisher issues many releases against one assembly, and names in the literature cite transcript versions that later

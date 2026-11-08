@@ -26,8 +26,9 @@ publisher's release ──build──▶ store + genome ──read──▶ Data
    chromosome, an alternate locus or a patch ([`design/placements.md`](design/placements.md)).
 1. **The files at rest are a contract.** A store is built once and read for years, from buckets this repo does not own.
    Its format is defined by the protos under `proto/`, evolves additively, and carries a format version the reader
-   checks before it reads anything else. A shard of bundles is immutable at its path and named for its contents, so an
-   index can never silently point at different bytes.
+   checks before it reads anything else. A reader opens a range of versions, so a store stays readable until a major
+   release retires its version. A shard of bundles is immutable at its path and named for its contents, so an index can
+   never silently point at different bytes.
 1. **An answer or an error, never a guess.** "Not in the reference data" is a valid answer. A substitute is not: the
    provider does not fall back to another version of a transcript, or to the genome in place of a record — choosing a
    stand-in is the caller's policy, stated where it is applied. A file that disagrees with its own manifest raises.
