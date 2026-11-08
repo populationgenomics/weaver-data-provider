@@ -574,3 +574,10 @@ def test_a_protein_with_no_version_is_found_by_its_accession(tmp_path: pathlib.P
 def test_a_bare_accession_is_not_a_prefix_of_a_longer_one(tmp_path: pathlib.Path) -> None:
     root = _write(tmp_path, [('UP_1', [_proteins_only('UNI', [('P00001-20', 0)])])])
     assert not store.BundleStore(str(root)).holds_protein('P00001-2')
+
+
+def test_a_reference_protein_with_no_version_is_refused(tmp_path: pathlib.Path) -> None:
+    bundle = _bundle('BRCA2', 'NM_000059', chromosome='NC_000013.11', start=1000, residues=b'ACGTACGTAC')
+    bundle.proteins[0].version = 0
+    with pytest.raises(build.BuildError, match=r'protein\.version'):
+        store_build.write_shard([bundle], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))

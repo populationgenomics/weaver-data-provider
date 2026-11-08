@@ -9,10 +9,13 @@ Each entry's canonical sequence is bundled under its accession and sequence vers
 spelling NCBI Protein uses. An entry with alternative isoforms has its canonical keyed again under the
 isoform ID the release displays, which is not always `-1`, and each other isoform under its ID alone,
 `P38398-2`, with the sequence this release gives it: an isoform ID has no version. An entry goes into the
-bundle of each gene it cross-references, by HGNC ID, or by GeneID where it names no HGNC gene. Left out,
-and counted in the build's report: an entry of another species, an entry naming no gene, and an
-isoform whose sequence the release does not describe or the isoform file lacks. An isoform an entry
-lists under another entry's accession, or as external, is that entry's to key.
+bundle of each gene it cross-references, by HGNC ID, or by GeneID where it names no gene HGNC holds.
+Left out, and counted in the build's report: an entry of another species, an entry naming no gene or one
+with no symbol, and an isoform whose sequence the release does not describe or the isoform file lacks.
+The displayed isoform is also keyed under another entry's isoform ID where that entry lists the ID as
+described elsewhere; an ID of an accession no entry describes it under, a retired entry's, is left out and
+counted. Any other isoform an entry lists under another entry's accession is that entry's to key. A name
+the release gives two sequences fails the build.
 """
 
 from __future__ import annotations
@@ -148,7 +151,7 @@ def _read_isoforms(path: pathlib.Path) -> dict[str, bytes]:
     Raises:
         build.BuildError: If a header is not `db|id|name`.
     """
-    out = {}
+    out: dict[str, bytes] = {}
     for header, residues in common.read_fasta(path).items():
         fields = header.split('|')
         if len(fields) != 3:
@@ -172,30 +175,23 @@ class _Gene:
 def _genes_of(
     entry: _Entry, by_hgnc_id: dict[str, list[dict[str, str]]], by_gene_id: dict[str, list[dict[str, str]]]
 ) -> list[tuple[str, _Gene]]:
-    """The genes an entry cross-references, each keyed by its HGNC ID where HGNC knows it, else by GeneID."""
-    out = []
-    if entry.hgnc_ids:
-        for hgnc_id in entry.hgnc_ids:
-            row, others = common.hgnc_row(by_hgnc_id.get(hgnc_id), entry.symbol)
-            gene_id = row['entrez_id'] if row is not None else ''
-            out.append((hgnc_id, _Gene(row, entry.symbol, hgnc_id, gene_id, others)))
+    """The genes an entry cross-references, each keyed by its HGNC ID where HGNC knows it, else by GeneID.
+
+    An HGNC ID HGNC does not hold is withdrawn, so it names no gene; the entry's GeneIDs are read instead.
+    """
+    out: list[tuple[str, _Gene]] = []
+    for hgnc_id in entry.hgnc_ids:
+        rows = by_hgnc_id.get(hgnc_id)
+        if rows:
+            row, others = common.hgnc_row(rows, entry.symbol)
+            out.append((hgnc_id, _Gene(row, entry.symbol, hgnc_id, row['entrez_id'] if row else '', others)))
+    if out:
         return out
     for gene_id in entry.gene_ids:
         row, others = common.hgnc_row(by_gene_id.get(gene_id), entry.symbol)
-        key = row['hgnc_id'] if row is not None else f'GeneID:{gene_id}'
-        out.append((key, _Gene(row, entry.symbol, row['hgnc_id'] if row is not None else '', gene_id, others)))
+        hgnc_id = row['hgnc_id'] if row is not None else ''
+        out.append((hgnc_id or f'GeneID:{gene_id}', _Gene(row, entry.symbol, hgnc_id, gene_id, others)))
     return out
-
-
-def _add(gene: _Gene, accession: str, version: int, residues: bytes) -> None:
-    """A protein into a gene's set.
-
-    Raises:
-        build.BuildError: If the gene already holds the name with other residues.
-    """
-    held = gene.proteins.setdefault(accession, (version, residues))
-    if held != (version, residues):
-        raise build.BuildError(f'{accession}: two entries give it different sequences')
 
 
 def _bundle(gene: _Gene) -> bundle_pb2.GeneBundle:
@@ -225,21 +221,29 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
     """The release's bundles, one per gene, in symbol order; the build's report goes to stderr.
 
     Raises:
-        build.BuildError: If an entry or the isoform file is malformed, an accession is in two entries, or a
-            gene has no symbol in the entry or HGNC.
+        build.BuildError: If an entry or the isoform file is malformed, an accession is in two entries, or the
+            release gives one name two sequences.
     """
     isoforms = _read_isoforms(release.isoforms)
     by_hgnc_id = common.read_hgnc(release.hgnc, 'hgnc_id')
     by_gene_id = common.read_hgnc(release.hgnc, 'entrez_id')
     genes: dict[str, _Gene] = {}
-    seen: set[str] = set()
+    keyed: dict[str, bytes] = {}  # every name keyed, to the residues it names
     left_out: collections.Counter[str] = collections.Counter()
-    entries = isoform_ids = 0
-    for entry in _read_entries(release.entries):
-        entries += 1
-        if entry.accession in seen:
-            raise build.BuildError(f'{entry.accession}: in two entries')
-        seen.add(entry.accession)
+    read = list(_read_entries(release.entries))
+    if duplicated := [a for a, n in collections.Counter(e.accession for e in read).items() if n > 1]:
+        raise build.BuildError(f'{duplicated[0]}: in two entries')
+    # IDs an entry lists under its own accession as described in another entry, which keys them as its canonical
+    described_elsewhere = {
+        i
+        for e in read
+        for isoform in e.isoforms
+        if isoform.sequence == 'External'
+        for i in isoform.ids
+        if i.startswith(f'{e.accession}-')
+    }
+    isoform_ids = 0
+    for entry in read:
         if entry.taxon != _HUMAN:
             left_out['entries of another species'] += 1
             continue
@@ -252,12 +256,17 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
             continue
         proteins = [(entry.accession, entry.sequence_version, entry.residues)]
         for isoform in entry.isoforms:
+            if isoform.sequence == 'Displayed':
+                for isoform_id in isoform.ids:
+                    if isoform_id.startswith(f'{entry.accession}-') or isoform_id in described_elsewhere:
+                        proteins.append((isoform_id, 0, entry.residues))
+                    else:
+                        left_out['displayed isoform IDs of an accession no entry describes them under'] += 1
+                continue
             own = [i for i in isoform.ids if i.startswith(f'{entry.accession}-')]
             if not own or isoform.sequence == 'External':
                 continue
-            if isoform.sequence == 'Displayed':
-                proteins += [(i, 0, entry.residues) for i in own]
-            elif isoform.sequence == 'Not described':
+            if isoform.sequence == 'Not described':
                 left_out['isoforms the release does not describe'] += len(own)
             else:
                 for isoform_id in own:
@@ -266,12 +275,14 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
                     else:
                         left_out['isoforms the isoform file lacks'] += 1
         isoform_ids += len(proteins) - 1
+        for accession, _, residues in proteins:
+            if keyed.setdefault(accession, residues) != residues:
+                raise build.BuildError(f'{accession}: the release gives it two sequences')
         for key, gene in named:
             held = genes.setdefault(key, gene)
-            for accession, version, residues in proteins:
-                _add(held, accession, version, residues)
+            held.proteins.update((accession, (version, residues)) for accession, version, residues in proteins)
     print(
-        f'{release.release}: {entries} entries, bundled in {len(genes)} genes with {isoform_ids} isoform IDs; '
+        f'{release.release}: {len(read)} entries, bundled in {len(genes)} genes with {isoform_ids} isoform IDs; '
         f'left out: {common.counted(left_out)}',
         file=sys.stderr,
     )

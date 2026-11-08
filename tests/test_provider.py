@@ -590,3 +590,36 @@ def test_a_protein_with_no_version_serves_its_residues_by_its_accession(
     store_build.write_index(tmp_path / 'uniprot', [shard], assembly=testing.ASSEMBLY)
     provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'uniprot')), built.genome)
     assert provider.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKV'
+
+
+def _isoform_release(tmp_path: pathlib.Path, release: str, residues: bytes) -> pathlib.Path:
+    """A UniProt-shaped shard holding FWD's isoform P00001-2 with these residues."""
+    digest = refget.digest(residues)
+    bundle = bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol='FWD'),
+        proteins=[bundle_pb2.Protein(accession='P00001-2', version=0, sequence_digest=digest)],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=residues)],
+    )
+    source = tmp_path / f'{release}.dat'
+    source.write_text('synthetic\n', 'utf-8')
+    return store_build.write_shard([bundle], tmp_path / 'shards', release=release, inputs=[('entries', source)])
+
+
+@pytest.fixture
+def reused_isoform(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """Two UniProt releases stacked, the later giving the isoform ID P00001-2 other residues, MKNEW for MKOLD."""
+    shards = [_isoform_release(tmp_path, 'UP_1', b'MKOLD'), _isoform_release(tmp_path, 'UP_2', b'MKNEW')]
+    store_build.write_index(tmp_path / 'reused', shards, assembly=testing.ASSEMBLY)
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'reused')), built.genome)
+
+
+def test_a_reused_isoform_id_serves_the_later_releases_residues(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKNEW'
+
+
+def test_a_reused_isoform_ids_digest_is_the_later_releases(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_refget_accession('P00001-2') == refget.digest(b'MKNEW')
+
+
+def test_a_digest_a_reused_name_no_longer_carries_names_nothing(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_accession_for_refget(refget.digest(b'MKOLD')) is None

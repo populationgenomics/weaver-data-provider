@@ -178,6 +178,11 @@ message Exon {
 }
 
 message Protein {
+  option (buf.validate.message).cel = {
+    id: "protein.version"
+    message: "only a UniProt isoform ID with no transcript (P38398-2) has no version"
+    expression: "this.version > 0 || (this.transcript_accession == '' && this.accession.matches('^[A-Z0-9]+-[0-9]+$'))"
+  };
   string accession = 1 [(buf.validate.field).string.min_len = 1]; // "NP_000050", "P38398-2"
   // 0 for a record with no version of its own, a UniProt isoform ID, keyed by its accession alone.
   uint32 version = 2;

@@ -191,7 +191,7 @@ class BundleProvider:
 
         A gene's proteins are those its listed transcripts encode. `p -> c` answers the transcripts recorded
         as encoding that version of the protein. A protein, like a transcript, is named by version: a bare
-        accession, or a version no release holds, answers empty.
+        accession, a version no release holds, or a protein no transcript encodes, a UniProt one, answers empty.
         """
         if source_kind == 'gene' and target_kind == 'c':
             transcripts = (f'{t.accession}.{t.version}' for _, t in self._gene_transcripts(symbol))
@@ -263,11 +263,12 @@ class BundleProvider:
     # ---- refget ------------------------------------------------------------------------------------
 
     def get_refget_accession(self, ac: str) -> str | None:
+        """The digest of the sequence the name serves: the newest release's, where several hold the name."""
         if ac in self._genome:
             return self._genome.digest(ac)
         try:
             if self._is_protein(ac):
-                for bundle in self._store.by_protein(ac):
+                for bundle in reversed(self._store.by_protein(ac)):
                     for protein in bundle.proteins:
                         if store_mod.protein_name(protein) == ac:
                             return protein.sequence_digest
@@ -304,4 +305,6 @@ class BundleProvider:
                     publisher = publishers.get((protein.transcript_accession, protein.transcript_version))
                     rank = _DIGEST_PREFERENCE.get(publisher, _UNRANKED) if publisher is not None else _UNRANKED
                     found.append((rank, store_mod.protein_name(protein)))
-        return min(found, key=lambda item: item[0])[1] if found else None
+        # A name a later release gives other residues, a reused UniProt isoform ID, no longer carries this digest.
+        current = [(rank, name) for rank, name in found if self.get_refget_accession(name) == refget]
+        return min(current, key=lambda item: item[0])[1] if current else None
