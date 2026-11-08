@@ -174,12 +174,6 @@ Ensembl beside one holding everything costs one more index and no copied shards.
 | GenBank CDS of another shape  | left out, counted                            | a complement, order or remote location; not read    |
 | GenBank record not an mRNA    | left out, counted                            | a genomic record is not a transcript                |
 | RefSeq record among them      | left out, counted                            | its release's shard serves it, placed               |
-| GenBank CDS from base 2 or 3  | left out, counted                            | a partial clone; the bundle states no reading frame |
-| GenBank CDS in another code   | left out, counted                            | the provider translates in the standard code        |
-| GenBank, no one CDS's protein | left out, counted                            | several name one, or none does, or no translation   |
-| GenBank CDS of another shape  | left out, counted                            | a complement, order or remote location; not read    |
-| GenBank record not an mRNA    | left out, counted                            | a genomic record is not a transcript                |
-| RefSeq record among them      | left out, counted                            | its release's shard serves it, placed               |
 | UniProt canonical isoform     | a protein, versioned by its sequence version | also keyed under its isoform ID; no transcript      |
 | UniProt other isoform         | a protein, under its bare ID                 | one sequence per shard, as the release states it    |
 
@@ -283,8 +277,8 @@ downstream. And "the newest version whose residue matches" is sometimes right on
 upstream shifted the numbering.
 
 These records carry no status or tags from their publisher. A GenBank or UniProt record is current in the release the
-shard was cut from, and has no MANE or Select tag. Where the store also holds a higher version, from a later release,
-the record has been replaced and is superseded, as a retired RefSeq version is
+shard was cut from, and has no MANE or Select tag. Where the store also holds a higher version, the record has been
+replaced and is superseded, as a retired RefSeq version is
 ([`retired-versions.md`](retired-versions.md#a-retired-version-carries-no-recommendation)).
 
 ### The provider asks the store what kind an accession is

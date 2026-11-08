@@ -87,6 +87,15 @@ class KeyTable:
             return self.records(i)
         return ()
 
+    def keys_prefixed(self, prefix: bytes) -> list[bytes]:
+        """Every key starting with `prefix`, ascending."""
+        found: list[bytes] = []
+        i = self._first_at_or_after(prefix)
+        while i < len(self) and self.key(i).startswith(prefix):
+            found.append(bytes(self.key(i)))
+            i += 1
+        return found
+
     def prefixed(self, prefix: bytes) -> tuple[int, ...]:
         """The record numbers under every key starting with `prefix`, ascending and distinct."""
         found: set[int] = set()

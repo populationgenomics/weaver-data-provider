@@ -683,7 +683,7 @@ def test_a_protein_carries_the_tags_of_the_transcript_encoding_it(provider: prov
     assert found.tags == [weaver.AccessionTag.ManeSelect]
 
 
-def test_a_protein_a_retired_and_a_current_transcript_encode_is_current_with_the_current_ones_tags(
+def test_a_protein_a_retired_and_a_current_transcript_encode_is_current(
     built: testing.Reference, tmp_path: pathlib.Path
 ) -> None:
     made, _, _, _ = testing.bundles()
@@ -869,3 +869,27 @@ def test_a_protein_whose_encoding_transcript_is_not_held_is_refused(
     provider = _provider_over(built, tmp_path, [('RS_1', made)])
     with pytest.raises(weaver.DataProviderError, match=r'NP_000001\.1: the store names a transcript encoding it'):
         provider.get_accession_info('NP_000001.1')
+
+
+def test_a_protein_takes_no_tag_from_a_transcript_version_since_replaced(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    older, _, _, _ = testing.bundles()  # NM_000001.1, MANE Select, encoding NP_000001.1
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].version = 2  # a new UTR, the same NP_000001.1, and MANE Select moved elsewhere
+    del newer[0].transcripts[0].tags[:]
+    newer[0].proteins[0].transcript_version = 2
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NP_000001.1') == (weaver.AccessionStatus.Current, [])
+
+
+def test_a_suppressed_version_a_higher_one_is_held_for_stays_suppressed(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    older, _, _, _ = testing.bundles()
+    older[0].transcripts[0].status = bundle_pb2.TRANSCRIPT_STATUS_SUPPRESSED
+    del older[0].transcripts[0].tags[:]
+    newer, _, _, _ = testing.bundles()
+    newer[0].transcripts[0].version = 2
+    provider = _provider_over(built, tmp_path, [('RS_1', older), ('RS_2', newer)])
+    assert provider.get_accession_info('NM_000001.1') == (weaver.AccessionStatus.Suppressed, [])

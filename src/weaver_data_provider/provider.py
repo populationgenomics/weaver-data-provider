@@ -3,14 +3,14 @@
 weaver's `VariantMapper` takes a `DataProvider`: transcript models with per-exon alignments, sequence
 slices of transcripts, proteins and the genome, symbol and accession crosswalks, and refget
 identities. One provider serves one assembly; a resolver working across builds holds one per build.
-Every answer comes from the store's in-memory tables and one bundle read, or one indexed read of the
-genome.
+Every answer comes from the store's in-memory tables and the bundles holding the name asked about, or
+indexed reads of the genome.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 import weaver
 
@@ -60,6 +60,31 @@ def _tag(ac: str, tag: bundle_pb2.Tag) -> weaver.AccessionTag:
     if tag not in _TAGS:
         raise weaver.DataProviderError(f'{ac}: the store records tag {tag}, which this reader does not know')
     return _TAGS[tag]
+
+
+def _version(name: str) -> int:
+    """A held name's version: the number after its last dot, or 0 for a name with none."""
+    _, dot, version = name.rpartition('.')
+    return int(version) if dot and version.isascii() and version.isdigit() else 0
+
+
+def _unless_replaced(
+    ac: str,
+    status: bundle_pb2.TranscriptStatus,
+    tags: list[bundle_pb2.Tag],
+    names: Callable[[str], list[str]],
+) -> tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]]:
+    """A version's status and tags, unless `names` lists a higher version of its accession: then superseded, untagged.
+
+    A publisher issues a version only to replace the one before, so a higher one held says this one was
+    replaced, whatever its own release said. One suppressed stays suppressed.
+    """
+    base, dot, _ = ac.rpartition('.')
+    if not dot or not any(_version(name) > _version(ac) for name in names(base)):
+        return status, sorted(tags)
+    if status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT:
+        status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+    return status, []
 
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
@@ -308,27 +333,20 @@ class BundleProvider:
 
         A version is listed whatever its status or publisher: a name that cites the accession cites every
         version held, and `get_accession_info` gives each one's status for the caller to choose by. A name
-        with a version of its own, or one nothing is held under, lists nothing.
+        with a version of its own, or one nothing is held under, lists nothing. No bundle is read.
         """
-        held: dict[str, int] = {}
-        for name in self._genome.names:
-            base, _, version = name.rpartition('.')
-            if base == ac and version.isascii() and version.isdigit():
-                held[name] = int(version)
-        for bundle in self._store.by_accession(ac):
-            held.update((f'{t.accession}.{t.version}', t.version) for t in bundle.transcripts if t.accession == ac)
-        for bundle in self._store.by_protein(ac):
-            held.update((store_mod.protein_name(p), p.version) for p in bundle.proteins if p.accession == ac)
-        return sorted(held, key=lambda name: held[name], reverse=True)
+        held = [name for name in self._genome.names if name.rpartition('.')[0] == ac]
+        held += self._store.transcript_names(ac) + self._store.protein_names(ac)
+        return sorted(dict.fromkeys(held), key=_version, reverse=True)
 
     def get_accession_info(self, ac: str) -> tuple[weaver.AccessionStatus, list[weaver.AccessionTag]] | None:
         """The status and tags of the record `ac` names, from the newest release holding it; None where none is.
 
-        A protein has the status and tags of the transcripts that encode it: the most current of their
-        statuses, and every tag any carries. A protein no transcript encodes, a UniProt one, is current in
-        the release it came from and has no tags. A version the store also holds a higher version of has been
-        replaced, whatever its own release said, and so is superseded, with no tags, unless it was suppressed.
-        A sequence of the genome has no status recorded, so None.
+        A version the store also holds a higher version of has been replaced, whatever its own release said,
+        and so is superseded, with no tags, unless it was suppressed. A protein has the status and tags the
+        transcripts that encode it have by that rule: the most current of their statuses, and every tag any
+        carries. A protein no transcript encodes, a UniProt one, is current in the release it came from and
+        has no tags. A sequence of the genome has no status recorded, so None.
 
         Raises:
             weaver.DataProviderError: If the store records a transcript encoding a protein and holds none, or
@@ -336,37 +354,40 @@ class BundleProvider:
         """
         if ac in self._genome:
             return None
-        if self._is_protein(ac):
-            found = self._protein(ac)
-            if found is None:
-                return None
-            _, protein = found
-            if not protein.transcript_accession:
-                status, tags = bundle_pb2.TRANSCRIPT_STATUS_CURRENT, []
-            else:
-                status, tags = self._encoded_by(ac)
-        else:
-            try:
-                _, transcript = self._transcript(ac)
-            except weaver.DataProviderError:
-                return None
-            status, tags = transcript.status, sorted(transcript.tags)
-        base, _, version = ac.rpartition('.')
-        if version.isdigit() and self.get_accession_versions(base)[0] != ac:
-            if status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT:
-                status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
-            tags = []
+        found = self._protein_info(ac) if self._is_protein(ac) else self._transcript_info(ac)
+        if found is None:
+            return None
+        status, tags = found
         return _status(ac, status), [_tag(ac, t) for t in tags]
 
-    def _encoded_by(self, protein: str) -> tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]]:
-        """The combined status and tags of the transcripts encoding a versioned protein, each its newest record."""
-        encoding = self.get_symbol_accessions(protein, 'p', 'c')
-        if not encoding:
-            raise weaver.DataProviderError(f'{protein}: the store names a transcript encoding it and holds none')
-        transcripts = [self._transcript(ac)[1] for _, ac in encoding]
-        statuses = {t.status for t in transcripts}
+    def _transcript_info(self, ac: str) -> tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]] | None:
+        try:
+            _, transcript = self._transcript(ac)
+        except weaver.DataProviderError:
+            return None
+        return _unless_replaced(ac, transcript.status, list(transcript.tags), self._store.transcript_names)
+
+    def _protein_info(self, ac: str) -> tuple[bundle_pb2.TranscriptStatus, list[bundle_pb2.Tag]] | None:
+        holding = self._store.by_protein(ac)
+        protein = next((p for b in reversed(holding) for p in b.proteins if store_mod.protein_name(p) == ac), None)
+        if protein is None:
+            return None
+        if not protein.transcript_accession:
+            return _unless_replaced(ac, bundle_pb2.TRANSCRIPT_STATUS_CURRENT, [], self._store.protein_names)
+        base, _, version = ac.partition('.')
+        encoding = dict.fromkeys(
+            f'{t.accession}.{t.version}'
+            for b in holding
+            for t in b.transcripts
+            if t.protein_accession == base and str(t.protein_version) == version
+        )
+        infos = [info for name in encoding if (info := self._transcript_info(name)) is not None]
+        if not infos:
+            raise weaver.DataProviderError(f'{ac}: the store names a transcript encoding it and holds none')
+        statuses = {status for status, _ in infos}
         status = next((s for s in _STATUSES if s in statuses), min(statuses))
-        return status, sorted({tag for t in transcripts for tag in t.tags})
+        tags = sorted({tag for _, tags in infos for tag in tags})
+        return _unless_replaced(ac, status, tags, self._store.protein_names)
 
     # ---- refget ------------------------------------------------------------------------------------
 
