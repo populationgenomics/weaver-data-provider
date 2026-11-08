@@ -572,3 +572,21 @@ def test_a_provider_listing_no_defined_publisher_is_refused(
 ) -> None:
     with pytest.raises(ValueError, match='listed_publishers'):
         provider_mod.BundleProvider(built.store, built.genome, listed_publishers=publishers)
+
+
+def test_a_protein_with_no_version_serves_its_residues_by_its_accession(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    residues = b'MKV'
+    digest = refget.digest(residues)
+    uniprot = bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol='FWD'),
+        proteins=[bundle_pb2.Protein(accession='P00001-2', version=0, sequence_digest=digest)],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=residues)],
+    )
+    source = tmp_path / 'entries.dat'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard([uniprot], tmp_path / 'shards', release='UP_1', inputs=[('entries', source)])
+    store_build.write_index(tmp_path / 'uniprot', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'uniprot')), built.genome)
+    assert provider.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKV'

@@ -164,7 +164,7 @@ class BundleProvider:
         if self._is_protein(accession):
             for bundle in reversed(self._store.by_protein(accession)):
                 for protein in bundle.proteins:
-                    if f'{protein.accession}.{protein.version}' == accession:
+                    if store_mod.protein_name(protein) == accession:
                         return _sequence(bundle, protein.sequence_digest)
             raise weaver.DataProviderError(f'{accession}: not in the reference data')
         bundle, transcript = self._transcript(accession)
@@ -215,7 +215,7 @@ class BundleProvider:
             return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
         if source_kind == 'gene' and target_kind == 'p':
             proteins = (
-                f'{p.accession}.{p.version}'
+                store_mod.protein_name(p)
                 for b, t in self._gene_transcripts(symbol)
                 for p in b.proteins
                 if (p.transcript_accession, p.transcript_version) == (t.accession, t.version)
@@ -265,7 +265,7 @@ class BundleProvider:
             if self._is_protein(ac):
                 for bundle in self._store.by_protein(ac):
                     for protein in bundle.proteins:
-                        if f'{protein.accession}.{protein.version}' == ac:
+                        if store_mod.protein_name(protein) == ac:
                             return protein.sequence_digest
                 return None
             _, transcript = self._transcript(ac)
@@ -299,5 +299,5 @@ class BundleProvider:
                 if protein.sequence_digest == refget:
                     publisher = publishers.get((protein.transcript_accession, protein.transcript_version))
                     rank = _DIGEST_PREFERENCE.get(publisher, _UNRANKED) if publisher is not None else _UNRANKED
-                    found.append((rank, f'{protein.accession}.{protein.version}'))
+                    found.append((rank, store_mod.protein_name(protein)))
         return min(found, key=lambda item: item[0])[1] if found else None

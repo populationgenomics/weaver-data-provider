@@ -194,7 +194,7 @@ def _index_bundle(
             span_end = max(e.genome_end_inclusive for e in alignment.exons)
             intervals[alignment.chromosome].append((span_start, span_end, record))
     for protein in bundle.proteins:
-        tables[store_mod.PROTEIN].add(f'{protein.accession}.{protein.version}'.encode('ascii'), [record])
+        tables[store_mod.PROTEIN].add(store_mod.protein_name(protein).encode('ascii'), [record])
     for sequence in bundle.sequences:
         tables[store_mod.DIGEST].add(refget.raw(sequence.digest), [record])
 
