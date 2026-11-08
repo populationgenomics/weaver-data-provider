@@ -532,3 +532,13 @@ def test_a_digest_two_publishers_share_names_the_reference_publishers_accession(
 
 def test_a_digest_only_genbank_holds_names_the_genbank_accession(with_genbank: provider_mod.BundleProvider) -> None:
     assert with_genbank.get_accession_for_refget(refget.digest(GENBANK_RECORD.encode())) == 'U00001.1'
+
+
+def test_a_provider_made_to_include_retired_versions_lists_their_proteins_for_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1'),
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.2'),
+    ]

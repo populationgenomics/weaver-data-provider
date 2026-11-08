@@ -370,6 +370,16 @@ def test_a_format_version_newer_than_the_reader_is_refused(tmp_path: pathlib.Pat
         store.BundleStore(str(root))
 
 
+def test_a_format_version_older_than_the_reader_is_refused(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES)])
+    manifest = store.read_manifest(str(root))
+    manifest.format_version = weaver_data_provider.MIN_FORMAT_VERSION - 1
+    (root / store.MANIFEST).unlink()
+    _files.write_record(root / store.MANIFEST, manifest.SerializeToString())
+    with pytest.raises(store.StoreError, match='format version'):
+        store.BundleStore(str(root))
+
+
 def test_a_store_of_reference_records_is_format_version_1(tmp_path: pathlib.Path) -> None:
     root = _write(tmp_path, [('RS_1', _BUNDLES)])
     assert store.read_manifest(str(root)).format_version == 1

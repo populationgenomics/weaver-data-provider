@@ -54,7 +54,10 @@ def read_manifest(root: str) -> store_pb2.StoreManifest:
     manifest = store_pb2.StoreManifest()
     manifest.ParseFromString(_files.read_record(_files.join(root, MANIFEST)))
     if not weaver_data_provider.MIN_FORMAT_VERSION <= manifest.format_version <= weaver_data_provider.FORMAT_VERSION:
-        raise StoreError(f'{root}: format version {manifest.format_version}; {weaver_data_provider.format_versions()}')
+        raise StoreError(
+            f'{root}: format version {manifest.format_version}; this package reads versions '
+            f'{weaver_data_provider.MIN_FORMAT_VERSION} to {weaver_data_provider.FORMAT_VERSION}'
+        )
     return manifest
 
 

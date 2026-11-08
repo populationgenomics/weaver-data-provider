@@ -11,8 +11,3 @@ __version__ = importlib.metadata.version('hgvs-weaver-data')
 # release (docs/design/store.md).
 MIN_FORMAT_VERSION = 1
 FORMAT_VERSION = 2
-
-
-def format_versions() -> str:
-    """The versions this package reads, for an error refusing another."""
-    return f'this package reads versions {MIN_FORMAT_VERSION} to {FORMAT_VERSION}'
