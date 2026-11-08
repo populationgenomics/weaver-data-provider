@@ -24,7 +24,7 @@ dependencies = [
 gcs = ["bagz[gcs]>=0.3.8"]
 # The builder: NCBI's alignment BAMs are read with pysam, and every record written is checked against
 # the protos' buf.validate constraints.
-build = ["pysam>=0.23", "protovalidate>=1.2"]
+build = ["pysam>=0.23", "protovalidate>=2.1"]
 
 [project.scripts]
 weaver-data-build = "weaver_data_provider.build.cli:main"
