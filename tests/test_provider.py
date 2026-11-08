@@ -264,13 +264,11 @@ GENBANK_RECORD = 'ATGAAACTGGTGTAAGG'  # a synthetic mRNA: CDS ATG AAA CTG GTG TA
 GENBANK_PROTEIN = 'MKLV'  # NP_000001.1's residues, so the two share a digest
 
 
-@pytest.fixture
-def genbank_store(tmp_path: pathlib.Path) -> store_mod.BundleStore:
-    """The synthetic store with a GenBank shard stacked on it: FWD's U00001.1, unplaced, encoding AAA00001.1."""
-    made, _, _, _ = testing.bundles()
+def _genbank_bundle(gene: bundle_pb2.Gene) -> bundle_pb2.GeneBundle:
+    """The gene's U00001.1, unplaced, encoding AAA00001.1."""
     record, protein = GENBANK_RECORD.encode(), GENBANK_PROTEIN.encode()
-    genbank = bundle_pb2.GeneBundle(
-        gene=made[0].gene,
+    return bundle_pb2.GeneBundle(
+        gene=gene,
         transcripts=[
             bundle_pb2.Transcript(
                 accession='U00001',
@@ -298,14 +296,25 @@ def genbank_store(tmp_path: pathlib.Path) -> store_mod.BundleStore:
             bundle_pb2.Sequence(digest=refget.digest(protein), alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=protein),
         ],
     )
+
+
+def _genbank_store(tmp_path: pathlib.Path, *, genbank_first: bool) -> store_mod.BundleStore:
+    made, _, _, _ = testing.bundles()
     source = tmp_path / 'records.gb'
     source.write_text('synthetic\n', 'utf-8')
-    shards = [
-        store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)]),
-        store_build.write_shard([genbank], tmp_path / 'shards', release='GB_1', inputs=[('records', source)]),
-    ]
+    refseq = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    genbank = store_build.write_shard(
+        [_genbank_bundle(made[0].gene)], tmp_path / 'shards', release='GB_1', inputs=[('records', source)]
+    )
+    shards = [genbank, refseq] if genbank_first else [refseq, genbank]
     store_build.write_index(tmp_path / 'with-genbank', shards, assembly=testing.ASSEMBLY)
     return store_mod.BundleStore(str(tmp_path / 'with-genbank'))
+
+
+@pytest.fixture
+def genbank_store(tmp_path: pathlib.Path) -> store_mod.BundleStore:
+    """The synthetic store with a GenBank shard stacked on it: FWD's U00001.1, unplaced, encoding AAA00001.1."""
+    return _genbank_store(tmp_path, genbank_first=False)
 
 
 @pytest.fixture
@@ -510,3 +519,16 @@ def test_a_provider_made_to_include_retired_versions_lists_them_over_a_region(
 ) -> None:
     provider = _with_retired(built, tmp_path, include_retired=True)
     assert provider.get_transcripts_for_region(testing.CHROM, 150, 150) == ['NM_000001.1', 'NM_000001.2']
+
+
+@pytest.mark.parametrize('genbank_first', [False, True])
+def test_a_digest_two_publishers_share_names_the_reference_publishers_accession(
+    built: testing.Reference, tmp_path: pathlib.Path, genbank_first: bool
+) -> None:
+    store = _genbank_store(tmp_path, genbank_first=genbank_first)
+    provider = provider_mod.BundleProvider(store, built.genome)
+    assert provider.get_accession_for_refget(refget.digest(GENBANK_PROTEIN.encode())) == 'NP_000001.1'
+
+
+def test_a_digest_only_genbank_holds_names_the_genbank_accession(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_accession_for_refget(refget.digest(GENBANK_RECORD.encode())) == 'U00001.1'

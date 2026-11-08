@@ -26,6 +26,11 @@ _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 # Whose records a gene's or a region's answer lists unless the caller says otherwise.
 REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
 
+# Whose accession a digest names first, when several publishers hold the residues; a protein no transcript
+# encodes, UniProt's, after all of these. The order keeps the answer stable as shards are stacked.
+_DIGEST_PREFERENCE = {bundle_pb2.PUBLISHER_REFSEQ: 0, bundle_pb2.PUBLISHER_ENSEMBL: 0, bundle_pb2.PUBLISHER_GENBANK: 1}
+_UNRANKED = len(_DIGEST_PREFERENCE)
+
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
     return str(kind).lower()
@@ -266,7 +271,7 @@ class BundleProvider:
         return transcript.sequence_digest
 
     def get_accession_for_refget(self, refget: str) -> str | None:
-        """The accession carrying a digest: a chromosome first, then a transcript, then a protein.
+        """The accession carrying a digest: a chromosome first, then a reference publisher's, then GenBank's.
 
         A `ga4gh:` prefix is accepted; a string that is not an `SQ.` digest names nothing, so answers None.
         """
@@ -280,11 +285,16 @@ class BundleProvider:
             holding = self._store.by_digest(refget)
         except ValueError:  # not a well-formed digest
             return None
+        found: list[tuple[int, str]] = []
         for bundle in holding:
+            publishers = {(t.accession, t.version): t.publisher for t in bundle.transcripts}
             for transcript in bundle.transcripts:
                 if transcript.sequence_digest == refget:
-                    return f'{transcript.accession}.{transcript.version}'
+                    rank = _DIGEST_PREFERENCE.get(transcript.publisher, _UNRANKED)
+                    found.append((rank, f'{transcript.accession}.{transcript.version}'))
             for protein in bundle.proteins:
                 if protein.sequence_digest == refget:
-                    return f'{protein.accession}.{protein.version}'
-        return None
+                    publisher = publishers.get((protein.transcript_accession, protein.transcript_version))
+                    rank = _DIGEST_PREFERENCE.get(publisher, _UNRANKED) if publisher is not None else _UNRANKED
+                    found.append((rank, f'{protein.accession}.{protein.version}'))
+        return min(found, key=lambda item: item[0])[1] if found else None
