@@ -377,3 +377,79 @@ def test_weaver_refuses_to_place_an_unplaced_record(with_genbank: provider_mod.B
     mapper = weaver.VariantMapper(with_genbank)
     with pytest.raises(weaver.UnsupportedOperationError, match=r'U00001\.1'):
         mapper.c_to_g(weaver.parse('U00001.1:c.4A>G'), testing.CHROM)
+
+
+def test_a_genes_transcripts_leave_out_a_genbank_record(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1')
+    ]
+
+
+def test_a_genes_proteins_leave_out_a_genbank_records_protein(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1')
+    ]
+
+
+def _with_retired(
+    built: testing.Reference, tmp_path: pathlib.Path, *, include_retired: bool
+) -> provider_mod.BundleProvider:
+    """FWD's bundle holds NM_000001.2 encoding NP_000001.2, and NM_000001.1, superseded, encoding NP_000001.1."""
+    made, _, _, _ = testing.bundles()
+    fwd = made[0]
+    retired = fwd.transcripts[0]
+    retired.status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+    del retired.tags[:]
+    current = fwd.transcripts.add()
+    current.CopyFrom(retired)
+    current.version = 2
+    current.status = bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+    current.protein_version = 2
+    protein = fwd.proteins.add()
+    protein.CopyFrom(fwd.proteins[0])
+    protein.version = 2
+    protein.transcript_version = 2
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'retired', [shard], assembly=testing.ASSEMBLY)
+    store = store_mod.BundleStore(str(tmp_path / 'retired'))
+    return provider_mod.BundleProvider(store, built.genome, include_retired=include_retired)
+
+
+def test_a_genes_transcripts_leave_out_a_retired_version(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.2')
+    ]
+
+
+def test_a_genes_proteins_leave_out_a_retired_versions_protein(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.2')
+    ]
+
+
+def test_a_retired_version_is_still_served_when_named(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_transcript('NM_000001.1', None)['ac'] == 'NM_000001.1'
+
+
+def test_a_provider_made_to_include_retired_versions_lists_them_for_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1'),
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.2'),
+    ]
+
+
+def test_a_provider_made_to_include_retired_versions_lists_them_over_a_region(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_transcripts_for_region(testing.CHROM, 150, 150) == ['NM_000001.1', 'NM_000001.2']

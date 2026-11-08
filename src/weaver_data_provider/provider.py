@@ -21,6 +21,9 @@ _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 
+# Whose records a gene's or a region's answer lists. A record from any other publisher is served when named.
+_LISTED_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
+
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
     return str(kind).lower()
@@ -34,10 +37,23 @@ def _sequence(bundle: bundle_pb2.GeneBundle, digest: str) -> bytes:
 
 
 class BundleProvider:
-    """A `weaver.DataProvider` (and `Refget`, `TranscriptSearch`) over one assembly's store and genome."""
+    """A `weaver.DataProvider` (and `Refget`, `TranscriptSearch`) over one assembly's store and genome.
 
-    def __init__(self, store: store_mod.BundleStore, genome: genome_mod.Genome) -> None:
+    Every record the store holds is served when a name cites it. The transcripts and proteins listed for a
+    gene, and the transcripts listed over a region, are RefSeq's and Ensembl's current ones: a GenBank record
+    or a retired version would add a candidate the name did not cite, and weaver's readings say neither who
+    published a record nor, without a catalogue, its status, so a caller could not take it out again.
+    """
+
+    def __init__(
+        self, store: store_mod.BundleStore, genome: genome_mod.Genome, *, include_retired: bool = False
+    ) -> None:
         """One assembly's provider.
+
+        Args:
+            store: The store, on the genome's assembly.
+            genome: The genome.
+            include_retired: List retired versions, superseded or suppressed, for a gene and over a region too.
 
         Raises:
             ValueError: If the store and the genome are on different assemblies.
@@ -47,6 +63,15 @@ class BundleProvider:
             raise ValueError(f'store is on {name(store.assembly)}, genome on {name(genome.assembly)}')
         self._store = store
         self._genome = genome
+        self._include_retired = include_retired
+
+    def _listed(self, transcript: bundle_pb2.Transcript) -> bool:
+        """Whether a gene's or a region's answer lists this transcript."""
+        current = transcript.status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+        return transcript.publisher in _LISTED_PUBLISHERS and (current or self._include_retired)
+
+    def _gene_transcripts(self, symbol: str) -> list[tuple[bundle_pb2.GeneBundle, bundle_pb2.Transcript]]:
+        return [(b, t) for b in self._store.by_symbol(symbol) for t in b.transcripts if self._listed(t)]
 
     # ---- what weaver reads ------------------------------------------------------------------------
 
@@ -133,12 +158,12 @@ class BundleProvider:
     ) -> list[tuple[weaver.IdentifierType, str]]:
         """`gene -> c` or `p -> c`: transcripts; `c -> p` or `gene -> p`: proteins; anything else is empty.
 
-        `p -> c` answers the transcripts recorded as encoding that version of the protein. A protein,
-        like a transcript, is named by version: a bare accession, or a version no release holds, answers
-        empty.
+        A gene's proteins are those its listed transcripts encode. `p -> c` answers the transcripts recorded
+        as encoding that version of the protein. A protein, like a transcript, is named by version: a bare
+        accession, or a version no release holds, answers empty.
         """
         if source_kind == 'gene' and target_kind == 'c':
-            transcripts = (f'{t.accession}.{t.version}' for b in self._store.by_symbol(symbol) for t in b.transcripts)
+            transcripts = (f'{t.accession}.{t.version}' for _, t in self._gene_transcripts(symbol))
             return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
         if source_kind == 'c' and target_kind == 'p':
             try:
@@ -162,7 +187,12 @@ class BundleProvider:
             )
             return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
         if source_kind == 'gene' and target_kind == 'p':
-            proteins = (f'{p.accession}.{p.version}' for b in self._store.by_symbol(symbol) for p in b.proteins)
+            proteins = (
+                f'{p.accession}.{p.version}'
+                for b, t in self._gene_transcripts(symbol)
+                for p in b.proteins
+                if (p.transcript_accession, p.transcript_version) == (t.accession, t.version)
+            )
             return [(weaver.IdentifierType.ProteinAccession, ac) for ac in dict.fromkeys(proteins)]
         return []
 
@@ -179,15 +209,16 @@ class BundleProvider:
         return weaver.IdentifierType.Unknown
 
     def get_transcripts_for_region(self, chrom: str, start: int, end: int) -> list[str]:
-        """Versioned accessions of current transcripts placed over the 0-based closed interval, introns included.
+        """Versioned accessions of the listed transcripts placed over the 0-based closed interval, introns included.
 
         A retired version — one a historical shard holds as superseded or suppressed — is served when
-        named, but not listed here: a region's answer is what the publisher recommends today.
+        named, but not listed here unless the provider was made to: a region's answer is what the publisher
+        recommends today.
         """
         found: dict[str, None] = {}
         for bundle in self._store.overlapping(chrom, start, end):
             for transcript in bundle.transcripts:
-                if transcript.status != bundle_pb2.TRANSCRIPT_STATUS_CURRENT:
+                if not self._listed(transcript):
                     continue
                 if any(
                     a.chromosome == chrom
