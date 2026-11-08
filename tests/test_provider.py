@@ -342,3 +342,38 @@ def test_a_protein_with_no_reference_prefix_serves_its_residues(with_genbank: pr
 
 def test_a_protein_with_no_reference_prefix_has_its_digest(with_genbank: provider_mod.BundleProvider) -> None:
     assert with_genbank.get_refget_accession('AAA00001.1') == refget.digest(GENBANK_PROTEIN.encode())
+
+
+def test_an_unplaced_transcript_is_given_without_a_placement_whatever_genome_is_asked_for(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    model = with_genbank.get_transcript('U00001.1', testing.CHROM)
+    assert {'strand', 'reference_accession', 'exons'}.isdisjoint(model)
+    assert (model['cds_start_index'], model['cds_end_index']) == (0, 14)
+
+
+def test_a_placed_transcript_asked_for_on_another_sequence_is_refused(provider: provider_mod.BundleProvider) -> None:
+    with pytest.raises(weaver.DataProviderError, match=r'NM_000001\.1: no alignment on NC_000098\.1'):
+        provider.get_transcript('NM_000001.1', 'NC_000098.1')
+
+
+def test_weaver_checks_a_name_on_an_unplaced_record_against_its_own_bases(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    # c.4 is the record's index 3, the first base of codon AAA
+    assert weaver.parse('U00001.1:c.4A>G').validate(with_genbank)
+    assert not weaver.parse('U00001.1:c.4C>G').validate(with_genbank)
+
+
+def test_weaver_predicts_an_unplaced_records_protein_from_its_own_cds(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    mapper = weaver.VariantMapper(with_genbank)
+    # AAA (Lys2) to GAA (Glu)
+    assert mapper.c_to_p(weaver.parse('U00001.1:c.4A>G')).format() == 'AAA00001.1:p.(Lys2Glu)'
+
+
+def test_weaver_refuses_to_place_an_unplaced_record(with_genbank: provider_mod.BundleProvider) -> None:
+    mapper = weaver.VariantMapper(with_genbank)
+    with pytest.raises(weaver.UnsupportedOperationError, match=r'U00001\.1'):
+        mapper.c_to_g(weaver.parse('U00001.1:c.4A>G'), testing.CHROM)
