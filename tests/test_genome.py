@@ -10,6 +10,7 @@ import sys
 
 import pytest
 
+import weaver_data_provider
 from weaver_data_provider import _files, build, refget, testing
 from weaver_data_provider import genome as genome_mod
 from weaver_data_provider.build import genome as genome_build
@@ -170,10 +171,14 @@ def test_a_rewritten_blocks_file_is_refused(tmp_path: pathlib.Path) -> None:
         genome_mod.Genome(str(tmp_path / 'first'))
 
 
-def test_an_unknown_format_version_is_refused(built: testing.Reference) -> None:
+def test_a_genome_is_format_version_1(built: testing.Reference) -> None:
+    assert genome_mod.read_catalogue(built.genome.root).format_version == 1
+
+
+def test_a_format_version_newer_than_the_reader_is_refused(built: testing.Reference) -> None:
     root = pathlib.Path(built.genome.root)
     catalogue = genome_mod.read_catalogue(str(root))
-    catalogue.format_version += 1
+    catalogue.format_version = weaver_data_provider.FORMAT_VERSION + 1
     _rewrite_catalogue(root, catalogue)
     with pytest.raises(genome_mod.GenomeError, match='format version'):
         genome_mod.Genome(str(root))

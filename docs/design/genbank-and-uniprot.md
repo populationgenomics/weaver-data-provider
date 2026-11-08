@@ -154,8 +154,7 @@ Which records a shard holds is decided by the files the build is given, and the 
 - **UniProt:** one release's reviewed human entries with their isoforms, and, if the caller also gives it, the release's
   unreviewed entries, which add about 127 thousand entries to the 20 thousand reviewed.
 
-Each shard also records its publisher, so the provider can tell a record's publisher from the shard it came from, and a
-deployment that wants only some publishers can index only their shards. An index is about a tenth to a fifth of the size
+A deployment that wants only some publishers indexes only their shards. An index is about a tenth to a fifth of the size
 of the shards it covers, and shards are shared files that several indexes can name, so a store limited to RefSeq and
 Ensembl beside one holding everything costs one more index and no copied shards.
 
@@ -277,8 +276,9 @@ A reader of the current format decides an accession's kind by its prefix. From a
 answer that the record is not in the reference data, which is an answer, and false. It would also list GenBank and
 UniProt records in every gene's answer, since it has no filter for them. So a store with GenBank or UniProt shards is
 stamped format version 2, which the readers deployed so far refuse at open, and a store with only RefSeq and Ensembl
-shards stays at version 1, which they still read. Each shard records when it is cut whether it needs version 2, beside
-its publisher, so the index builder takes the stamp from its shards rather than from a list of publishers. The range of
+shards stays at version 1, which they still read. The index builder takes the stamp from the records it indexes, not
+from a list of publishers or a flag a shard could set wrongly: a store is version 2 if it holds any transcript or
+protein whose accession is outside the namespaces a version-1 reader recognises, and version 1 otherwise. The range of
 versions a reader opens, and how it narrows, is the store's policy
 ([`store.md`](store.md#a-store-is-files-and-it-opens-once)).
 

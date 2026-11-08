@@ -35,10 +35,9 @@ class GenomeError(ValueError):
 def read_catalogue(root: str) -> genome_pb2.SequenceCatalogue:
     catalogue = genome_pb2.SequenceCatalogue()
     catalogue.ParseFromString(_files.read_record(_files.join(root, CATALOGUE)))
-    if catalogue.format_version != weaver_data_provider.FORMAT_VERSION:
+    if not weaver_data_provider.MIN_FORMAT_VERSION <= catalogue.format_version <= weaver_data_provider.FORMAT_VERSION:
         raise GenomeError(
-            f'{root}: format version {catalogue.format_version}; '
-            f'this package reads version {weaver_data_provider.FORMAT_VERSION}'
+            f'{root}: format version {catalogue.format_version}; {weaver_data_provider.format_versions()}'
         )
     return catalogue
 

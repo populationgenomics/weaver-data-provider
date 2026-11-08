@@ -25,6 +25,20 @@ from weaver_data_provider.v1 import bundle_pb2, index_pb2, store_pb2
 
 _ZSTD = bagz.Writer.Options(compression=bagz.CompressionZstd())
 
+# The namespaces a version-1 reader takes an accession's kind from, fixed with the readers deployed. Any other
+# accession it answers as not in the reference data, and a gene's answer lists it, so a store holding one is version 2.
+_VERSION_1_TRANSCRIPTS = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
+_VERSION_1_PROTEINS = ('NP_', 'XP_', 'YP_', 'ENSP')
+
+
+def _format_version(bundle: bundle_pb2.GeneBundle) -> int:
+    """The lowest format version that reads this bundle correctly."""
+    if all(t.accession.startswith(_VERSION_1_TRANSCRIPTS) for t in bundle.transcripts) and all(
+        p.accession.startswith(_VERSION_1_PROTEINS) for p in bundle.proteins
+    ):
+        return 1
+    return 2
+
 
 def _input(role: str, path: pathlib.Path) -> store_pb2.Input:
     return store_pb2.Input(role=role, digest=_files.md5_of_local(path), digest_algorithm='md5')
@@ -219,7 +233,8 @@ def write_index(
     Each shard is read with the record `write_shard` left beside it. Record numbers run across the
     shards in the order given; the manifest names each by its path relative to `out`. Accessions and
     proteins are keyed by their versioned form only; the reader answers a bare accession with a prefix
-    search over the versions.
+    search over the versions. The manifest is stamped with the lowest format version that reads every
+    bundle correctly, so a store a version-1 reader serves correctly stays readable by it.
 
     Raises:
         build.BuildError: If a shard's bytes no longer match its digest, or an alignment is on another assembly.
@@ -230,7 +245,7 @@ def write_index(
     tables = {kind: keytable.KeyTableWriter(kind) for kind in store_mod.KINDS}
     intervals: dict[str, list[tuple[int, int, int]]] = collections.defaultdict(list)
     manifest = store_pb2.StoreManifest(
-        format_version=weaver_data_provider.FORMAT_VERSION, assembly=assembly, builder=build.BUILDER
+        format_version=weaver_data_provider.MIN_FORMAT_VERSION, assembly=assembly, builder=build.BUILDER
     )
     record = 0
     for path in shards:
@@ -244,6 +259,7 @@ def write_index(
             bundle = bundle_pb2.GeneBundle()
             bundle.ParseFromString(raw)
             _index_bundle(bundle, record, tables, intervals, assembly=assembly)
+            manifest.format_version = max(manifest.format_version, _format_version(bundle))
             record += 1
         if record != sum(s.records for s in manifest.shards):
             raise build.BuildError(f'{path}: holds a different number of records than recorded ({shard.records})')

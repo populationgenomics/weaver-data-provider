@@ -50,14 +50,11 @@ def symbol_key(symbol: str) -> str:
 
 
 def read_manifest(root: str) -> store_pb2.StoreManifest:
-    """A store's manifest, refused if its format version is not the one this package reads."""
+    """A store's manifest, refused if its format version is not one this package reads."""
     manifest = store_pb2.StoreManifest()
     manifest.ParseFromString(_files.read_record(_files.join(root, MANIFEST)))
-    if manifest.format_version != weaver_data_provider.FORMAT_VERSION:
-        raise StoreError(
-            f'{root}: format version {manifest.format_version}; '
-            f'this package reads version {weaver_data_provider.FORMAT_VERSION}'
-        )
+    if not weaver_data_provider.MIN_FORMAT_VERSION <= manifest.format_version <= weaver_data_provider.FORMAT_VERSION:
+        raise StoreError(f'{root}: format version {manifest.format_version}; {weaver_data_provider.format_versions()}')
     return manifest
 
 
