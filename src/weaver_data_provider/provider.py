@@ -9,6 +9,8 @@ genome.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import weaver
 
 from weaver_data_provider import genome as genome_mod
@@ -21,8 +23,8 @@ _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 
-# Whose records a gene's or a region's answer lists. A record from any other publisher is served when named.
-_LISTED_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
+# Whose records a gene's or a region's answer lists unless the caller says otherwise.
+REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
 
 
 def _kind_name(kind: str | weaver.IdentifierType) -> str:
@@ -40,19 +42,27 @@ class BundleProvider:
     """A `weaver.DataProvider` (and `Refget`, `TranscriptSearch`) over one assembly's store and genome.
 
     Every record the store holds is served when a name cites it. The transcripts and proteins listed for a
-    gene, and the transcripts listed over a region, are RefSeq's and Ensembl's current ones: a GenBank record
-    or a retired version would add a candidate the name did not cite, and weaver's readings say neither who
-    published a record nor, without a catalogue, its status, so a caller could not take it out again.
+    gene, and the transcripts listed over a region, are by default RefSeq's and Ensembl's current ones: a
+    GenBank record or a retired version would add a candidate the name did not cite, and weaver's readings
+    say neither who published a record nor, without a catalogue, its status, so a caller could not take it
+    out again. A caller wanting them listed says so when it makes the provider.
     """
 
     def __init__(
-        self, store: store_mod.BundleStore, genome: genome_mod.Genome, *, include_retired: bool = False
+        self,
+        store: store_mod.BundleStore,
+        genome: genome_mod.Genome,
+        *,
+        listed_publishers: Iterable[bundle_pb2.Publisher] = REFERENCE_PUBLISHERS,
+        include_retired: bool = False,
     ) -> None:
         """One assembly's provider.
 
         Args:
             store: The store, on the genome's assembly.
             genome: The genome.
+            listed_publishers: Whose transcripts, and the proteins they encode, a gene's or a region's answer
+                lists. A record from any publisher is served when named.
             include_retired: List retired versions, superseded or suppressed, for a gene and over a region too.
 
         Raises:
@@ -61,6 +71,7 @@ class BundleProvider:
         if store.assembly != genome.assembly:
             name = bundle_pb2.Assembly.Name
             raise ValueError(f'store is on {name(store.assembly)}, genome on {name(genome.assembly)}')
+        self._listed_publishers = frozenset(listed_publishers)
         self._store = store
         self._genome = genome
         self._include_retired = include_retired
@@ -68,7 +79,7 @@ class BundleProvider:
     def _listed(self, transcript: bundle_pb2.Transcript) -> bool:
         """Whether a gene's or a region's answer lists this transcript."""
         current = transcript.status == bundle_pb2.TRANSCRIPT_STATUS_CURRENT
-        return transcript.publisher in _LISTED_PUBLISHERS and (current or self._include_retired)
+        return transcript.publisher in self._listed_publishers and (current or self._include_retired)
 
     def _gene_transcripts(self, symbol: str) -> list[tuple[bundle_pb2.GeneBundle, bundle_pb2.Transcript]]:
         return [(b, t) for b in self._store.by_symbol(symbol) for t in b.transcripts if self._listed(t)]

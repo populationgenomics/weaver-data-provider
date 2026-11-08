@@ -265,7 +265,7 @@ GENBANK_PROTEIN = 'MKLV'  # NP_000001.1's residues, so the two share a digest
 
 
 @pytest.fixture
-def with_genbank(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+def genbank_store(tmp_path: pathlib.Path) -> store_mod.BundleStore:
     """The synthetic store with a GenBank shard stacked on it: FWD's U00001.1, unplaced, encoding AAA00001.1."""
     made, _, _, _ = testing.bundles()
     record, protein = GENBANK_RECORD.encode(), GENBANK_PROTEIN.encode()
@@ -305,7 +305,12 @@ def with_genbank(built: testing.Reference, tmp_path: pathlib.Path) -> provider_m
         store_build.write_shard([genbank], tmp_path / 'shards', release='GB_1', inputs=[('records', source)]),
     ]
     store_build.write_index(tmp_path / 'with-genbank', shards, assembly=testing.ASSEMBLY)
-    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'with-genbank')), built.genome)
+    return store_mod.BundleStore(str(tmp_path / 'with-genbank'))
+
+
+@pytest.fixture
+def with_genbank(built: testing.Reference, genbank_store: store_mod.BundleStore) -> provider_mod.BundleProvider:
+    return provider_mod.BundleProvider(genbank_store, built.genome)
 
 
 @pytest.mark.parametrize(
@@ -410,6 +415,37 @@ def test_a_genes_proteins_leave_out_a_genbank_records_protein(with_genbank: prov
     assert with_genbank.get_symbol_accessions('FWD', 'gene', 'p') == [
         (weaver.IdentifierType.ProteinAccession, 'NP_000001.1')
     ]
+
+
+def test_a_provider_made_to_list_genbank_lists_its_transcripts_for_a_gene(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    publishers = {bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_GENBANK}
+    provider = provider_mod.BundleProvider(genbank_store, built.genome, listed_publishers=publishers)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1'),
+        (weaver.IdentifierType.TranscriptAccession, 'U00001.1'),
+    ]
+
+
+def test_a_provider_made_to_list_genbank_lists_its_proteins_for_a_gene(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    publishers = {bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_GENBANK}
+    provider = provider_mod.BundleProvider(genbank_store, built.genome, listed_publishers=publishers)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1'),
+        (weaver.IdentifierType.ProteinAccession, 'AAA00001.1'),
+    ]
+
+
+def test_a_provider_made_to_list_only_ensembl_leaves_out_refseq(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    provider = provider_mod.BundleProvider(
+        genbank_store, built.genome, listed_publishers={bundle_pb2.PUBLISHER_ENSEMBL}
+    )
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == []
 
 
 def _with_retired(
