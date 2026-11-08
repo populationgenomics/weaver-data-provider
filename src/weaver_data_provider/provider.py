@@ -91,9 +91,10 @@ class BundleProvider:
     def get_transcript(self, transcript_ac: str, reference_ac: str | None) -> weaver.TranscriptData:
         """The model on `reference_ac`, or on the first sequence it is placed on: a chromosome where there is one.
 
-        A transcript placed on no sequence, a GenBank record, is given without a placement whatever
-        `reference_ac` is, so weaver reads it on its own sequence and refuses what needs a genome. A CDS end
-        the publisher marks open is passed on as open, and weaver numbers no position from it.
+        A transcript placed on no sequence — a GenBank record, or a RefSeq one NCBI published no alignment
+        for — is given without a placement whatever `reference_ac` is, so weaver reads it on its own sequence
+        and refuses what needs a genome. A CDS end the publisher marks open is passed on as open, and weaver
+        numbers no position from it.
 
         Raises:
             weaver.DataProviderError: If the transcript is not in the reference data, or is placed but not on

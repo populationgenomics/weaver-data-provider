@@ -387,6 +387,19 @@ def test_weaver_refuses_to_place_an_unplaced_record(with_genbank: provider_mod.B
         mapper.c_to_g(weaver.parse('U00001.1:c.4A>G'), testing.CHROM)
 
 
+def test_a_refseq_transcript_bundled_without_an_alignment_is_given_unplaced(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    del made[1].transcripts[0].alignments[:]  # REV's NM_000002.1, as NCBI published no alignment for it
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'unaligned', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'unaligned')), built.genome)
+    assert 'exons' not in provider.get_transcript('NM_000002.1', testing.CHROM)
+
+
 def test_a_genes_transcripts_leave_out_a_genbank_record(with_genbank: provider_mod.BundleProvider) -> None:
     assert with_genbank.get_symbol_accessions('FWD', 'gene', 'c') == [
         (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1')

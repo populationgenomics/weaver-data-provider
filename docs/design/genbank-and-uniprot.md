@@ -300,6 +300,9 @@ versions a reader opens, and how it narrows, is the store's policy
 - **Equivalence on these records is refused**, even between two spellings on one record, because weaver compares on the
   genome. Comparing on the record alone is weaver's to add
   ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
+- **A RefSeq transcript with no placement is served the same way.** The RefSeq builder bundles a non-coding transcript
+  NCBI published no alignment for, rather than refuse the release. It was refused when named; it is now read on its own
+  sequence, as a GenBank record is.
 - **A store's key and interval tables are unchanged in shape.** The new records add keys, and no intervals.
 - **A gene's answer stops listing retired versions.** The provider's gene lookups today list every version the
   historical shard holds, although its region lookup lists current ones only. The shared filter makes them agree, which
