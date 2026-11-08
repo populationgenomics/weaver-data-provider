@@ -9,6 +9,7 @@ genome.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 import weaver
@@ -22,6 +23,8 @@ from weaver_data_provider.v1 import bundle_pb2
 _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
+# UniProt's accession format, as its manual gives it, with an isoform's suffix or a sequence version.
+_UNIPROT = re.compile(r'^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+|\.\d+)?$')
 
 # Whose records a gene's or a region's answer lists unless the caller says otherwise.
 REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
@@ -228,7 +231,10 @@ class BundleProvider:
         return []
 
     def get_identifier_type(self, identifier: str) -> weaver.IdentifierType:
-        """What the store holds the identifier as; for one it does not hold, what its namespace says."""
+        """What the store holds the identifier as; for one it does not hold, what its namespace says.
+
+        UniProt's accession format is read last, after the gene symbols: `H2AC11` is a symbol in that shape.
+        """
         if identifier in self._genome or identifier.startswith(_GENOMIC):
             return weaver.IdentifierType.GenomicAccession
         if self._store.holds_transcript(identifier) or identifier.startswith(_TRANSCRIPT):
@@ -237,6 +243,8 @@ class BundleProvider:
             return weaver.IdentifierType.ProteinAccession
         if self._store.by_symbol(identifier):
             return weaver.IdentifierType.GeneSymbol
+        if _UNIPROT.match(identifier) is not None:
+            return weaver.IdentifierType.ProteinAccession
         return weaver.IdentifierType.Unknown
 
     def get_transcripts_for_region(self, chrom: str, start: int, end: int) -> list[str]:
@@ -279,7 +287,10 @@ class BundleProvider:
         return transcript.sequence_digest
 
     def get_accession_for_refget(self, refget: str) -> str | None:
-        """The accession carrying a digest: a chromosome first, then a reference publisher's, then GenBank's.
+        """The accession carrying a digest: a chromosome, then a reference publisher's, then GenBank's, then UniProt's.
+
+        A name with no version that a later release gives other residues, a reused UniProt isoform ID, no longer
+        carries the digest and is not named.
 
         A `ga4gh:` prefix is accepted; a string that is not an `SQ.` digest names nothing, so answers None.
         """
@@ -305,6 +316,9 @@ class BundleProvider:
                     publisher = publishers.get((protein.transcript_accession, protein.transcript_version))
                     rank = _DIGEST_PREFERENCE.get(publisher, _UNRANKED) if publisher is not None else _UNRANKED
                     found.append((rank, store_mod.protein_name(protein)))
-        # A name a later release gives other residues, a reused UniProt isoform ID, no longer carries this digest.
-        current = [(rank, name) for rank, name in found if self.get_refget_accession(name) == refget]
-        return min(current, key=lambda item: item[0])[1] if current else None
+        # A name with no version, a UniProt isoform ID, may be one a later release gives other residues;
+        # a versioned name names one sequence.
+        for _, name in sorted(dict.fromkeys(found), key=lambda item: item[0]):
+            if '.' in name or self.get_refget_accession(name) == refget:
+                return name
+        return None

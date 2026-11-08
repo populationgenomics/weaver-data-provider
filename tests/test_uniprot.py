@@ -33,11 +33,12 @@ def _entry(
     gene: str = 'Name=FWD; Synonyms=OLDFWD;',
     references: tuple[str, ...] = ('GeneID; 1001; -.', 'HGNC; HGNC:90001; FWD.'),
     isoforms: tuple[tuple[str, str], ...] = (),
+    secondaries: tuple[str, ...] = (),
 ) -> str:
     """One entry as UniProt writes it, with a SEQUENCE CAUTION whose `Sequence=` names no isoform."""
     lines = [
         f'ID   {accession}_HUMAN               Reviewed;         {len(residues)} AA.',
-        f'AC   {accession}; Q99999;',
+        'AC   ' + ' '.join(f'{a};' for a in (accession, *secondaries)),
         'DT   01-JAN-2000, integrated into UniProtKB/Swiss-Prot.',
         f'DT   01-JAN-2001, sequence version {version}.',
         'DT   01-JAN-2026, entry version 50.',
@@ -259,14 +260,63 @@ def test_an_isoform_id_its_own_entry_describes_elsewhere_is_keyed_where_it_is_di
     assert _names(bundles['FWD'])['P00002-2'] == refget.digest(CANONICAL.encode())
 
 
-def test_a_displayed_isoform_id_of_an_accession_no_entry_describes_it_under_is_left_out(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # as P0DX52 and P0DX53 both display Q08AF8-1, the ID of an entry since split between them
-    entry = _entry('P00001', CANONICAL, version=7, isoforms=(('P00001-1, P00099-1', 'Displayed'),))
+def test_an_isoform_id_under_a_secondary_accession_the_entry_alone_holds_is_keyed(tmp_path: pathlib.Path) -> None:
+    # as P60953 (CDC42) displays IsoId=P60953-2, P21181-4, P21181 having been merged into it
+    entry = _entry('P00001', CANONICAL, secondaries=('Q00007',), isoforms=(('P00001-1, Q00007-4', 'Displayed'),))
     (bundle,) = uniprot.bundles(_release(tmp_path, [entry], {}))
-    assert set(_names(bundle)) == {'P00001.7', 'P00001-1'}
-    assert _counted(capsys.readouterr().err, 'displayed isoform IDs of an accession no entry describes them under') == 1
+    assert _names(bundle)['Q00007-4'] == refget.digest(CANONICAL.encode())
+
+
+def test_a_variant_isoforms_secondary_id_takes_the_sequence_the_file_gives_its_primary_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    isoforms = (('P00001-1', 'Displayed'), ('P00001-2, Q00007-2', 'VSP_000001'))
+    entry = _entry('P00001', CANONICAL, secondaries=('Q00007',), isoforms=isoforms)
+    (bundle,) = uniprot.bundles(_release(tmp_path, [entry], {'P00001-2': ISOFORM_2}))
+    assert _names(bundle)['Q00007-2'] == refget.digest(ISOFORM_2.encode())
+
+
+@pytest.mark.parametrize(
+    'entries',
+    [
+        # as P0DX52 and P0DX53 both display Q08AF8-1, the ID of an entry since split between them
+        [
+            _entry('P00001', CANONICAL, secondaries=('Q00007',), isoforms=(('P00001-1, Q00007-1', 'Displayed'),)),
+            _entry('P00002', ISOFORM_2, secondaries=('Q00007',), references=('HGNC; HGNC:90002; REV.',)),
+        ],
+        # an accession no entry holds
+        [_entry('P00001', CANONICAL, isoforms=(('P00001-1, Q00007-1', 'Displayed'),))],
+        # one another entry lists as described elsewhere, under an accession that is not its own
+        [
+            _entry('P00001', CANONICAL, isoforms=(('P00001-1, Q00007-1', 'Displayed'),)),
+            _entry(
+                'P00002',
+                ISOFORM_2,
+                references=('HGNC; HGNC:90002; REV.',),
+                isoforms=(('P00002-1', 'Displayed'), ('Q00007-1', 'External')),
+            ),
+        ],
+    ],
+)
+def test_an_isoform_id_of_an_accession_no_one_entry_holds_is_left_out_and_counted(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], entries: list[str]
+) -> None:
+    bundles = list(uniprot.bundles(_release(tmp_path, entries, {})))
+    assert not any('Q00007-1' in _names(b) for b in bundles)
+    assert _counted(capsys.readouterr().err, 'isoform IDs of an accession no one entry holds') == 1
+
+
+def test_an_isoform_the_entry_says_is_described_elsewhere_is_not_keyed_here(tmp_path: pathlib.Path) -> None:
+    entry = _entry('P00001', CANONICAL, isoforms=(('P00001-1', 'Displayed'), ('P00001-2', 'External')))
+    (bundle,) = uniprot.bundles(_release(tmp_path, [entry], {'P00001-2': ISOFORM_2}))
+    assert 'P00001-2' not in _names(bundle)
+
+
+def test_an_entrys_gene_name_comes_before_its_hgnc_references_symbol(tmp_path: pathlib.Path) -> None:
+    references = ('HGNC; HGNC:99999; OLDSYM.', 'GeneID; 7777; -.')
+    entry = _entry('P00001', CANONICAL, references=references, gene='Name=NOVEL1;')
+    (bundle,) = uniprot.bundles(_release(tmp_path, [entry], {}))
+    assert bundle.gene.symbol == 'NOVEL1'
 
 
 def test_a_name_the_release_gives_two_sequences_fails_the_build(tmp_path: pathlib.Path) -> None:

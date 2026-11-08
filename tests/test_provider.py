@@ -577,17 +577,9 @@ def test_a_provider_listing_no_defined_publisher_is_refused(
 def test_a_protein_with_no_version_serves_its_residues_by_its_accession(
     built: testing.Reference, tmp_path: pathlib.Path
 ) -> None:
-    residues = b'MKV'
-    digest = refget.digest(residues)
-    uniprot = bundle_pb2.GeneBundle(
-        gene=bundle_pb2.Gene(symbol='FWD'),
-        proteins=[bundle_pb2.Protein(accession='P00001-2', version=0, sequence_digest=digest)],
-        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=residues)],
+    store_build.write_index(
+        tmp_path / 'uniprot', [_isoform_release(tmp_path, 'UP_1', b'MKV')], assembly=testing.ASSEMBLY
     )
-    source = tmp_path / 'entries.dat'
-    source.write_text('synthetic\n', 'utf-8')
-    shard = store_build.write_shard([uniprot], tmp_path / 'shards', release='UP_1', inputs=[('entries', source)])
-    store_build.write_index(tmp_path / 'uniprot', [shard], assembly=testing.ASSEMBLY)
     provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'uniprot')), built.genome)
     assert provider.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKV'
 
@@ -623,3 +615,23 @@ def test_a_reused_isoform_ids_digest_is_the_later_releases(reused_isoform: provi
 
 def test_a_digest_a_reused_name_no_longer_carries_names_nothing(reused_isoform: provider_mod.BundleProvider) -> None:
     assert reused_isoform.get_accession_for_refget(refget.digest(b'MKOLD')) is None
+
+
+def test_a_uniprot_name_the_store_does_not_hold_is_a_protein_not_in_the_reference_data(
+    reused_isoform: provider_mod.BundleProvider,
+) -> None:
+    with pytest.raises(weaver.DataProviderError, match=r'P21181-4: not in the reference data'):
+        reused_isoform.get_seq('P21181-4', 0, None, weaver.IdentifierType.ProteinAccession)
+
+
+def test_a_gene_symbol_in_the_shape_of_a_uniprot_accession_is_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    made[0].gene.symbol = 'H2AC11'  # an HGNC symbol UniProt's accession format also fits
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'h2', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'h2')), built.genome)
+    assert provider.get_identifier_type('H2AC11') == weaver.IdentifierType.GeneSymbol
