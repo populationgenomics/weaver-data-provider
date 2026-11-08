@@ -228,6 +228,22 @@ class BundleStore:
         """Whether a protein with this accession, versioned or not, is in the store; no bundle is read."""
         return bool(self._versioned_or_all(PROTEIN, accession))
 
+    def _names(self, kind: str, accession: str) -> list[str]:
+        """The names keyed under a bare accession: itself, for a record with no version, and each `accession.N`."""
+        if not accession.isascii() or '.' in accession:
+            return []
+        table = self._tables[kind]
+        exact = [accession] if table.lookup(accession.encode('ascii')) else []
+        return exact + [k.decode('ascii') for k in table.keys_prefixed(f'{accession}.'.encode('ascii'))]
+
+    def transcript_names(self, accession: str) -> list[str]:
+        """The versioned names of the transcripts held under a bare accession; no bundle is read."""
+        return self._names(ACCESSION, accession)
+
+    def protein_names(self, accession: str) -> list[str]:
+        """The names of the proteins held under a bare accession, the accession itself for one with no version."""
+        return self._names(PROTEIN, accession)
+
     def by_digest(self, digest: str) -> list[bundle_pb2.GeneBundle]:
         """Bundles holding a sequence with this refget `SQ.` digest."""
         return self.bundles(self._tables[DIGEST].lookup(refget.raw(digest)))

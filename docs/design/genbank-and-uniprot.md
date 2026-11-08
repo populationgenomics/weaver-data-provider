@@ -277,7 +277,9 @@ downstream. And "the newest version whose residue matches" is sometimes right on
 upstream shifted the numbering.
 
 These records carry no status or tags from their publisher. A GenBank or UniProt record is current in the release the
-shard was cut from, and has no MANE or Select tag.
+shard was cut from, and has no MANE or Select tag. Where the store also holds a higher version, the record has been
+replaced and is superseded, as a retired RefSeq version is
+([`retired-versions.md`](retired-versions.md#a-retired-version-carries-no-recommendation)).
 
 ### The provider asks the store what kind an accession is
 
