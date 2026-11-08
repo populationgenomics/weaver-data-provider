@@ -151,6 +151,21 @@ def test_an_open_start_is_bundled_open(tmp_path: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ('sequence', 'translation'),
+    [
+        ('ATGAAAGG', 'MKG'),  # GG decides Gly whatever the third base, so INSDC translates it
+        ('ATGAAAAT', 'MK'),  # AT is Ile or Met, so it does not
+    ],
+)
+def test_a_codon_cut_short_at_an_open_end_is_translated_where_its_two_bases_decide_it(
+    tmp_path: pathlib.Path, sequence: str, translation: str
+) -> None:
+    record = _record('ZZ000002.1', sequence, cds='1..>8', protein=('ZZZ00002.1', translation))
+    (bundle,) = genbank.bundles(_release(tmp_path, [record], [('9606', '1001', 'ZZ000002.1', 'FWD')]))
+    assert bundle.proteins[0].sequence_digest == refget.digest(translation.encode())
+
+
+@pytest.mark.parametrize(
     ('record', 'reason'),
     [
         (_record('ZZ000003.1', CODING), 'no CDS'),

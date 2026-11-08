@@ -101,11 +101,17 @@ def _translates(coding: _Coding) -> bool:
     """Whether the record's translation is the conceptual translation of its CDS's bases.
 
     A closed start is the initiator, written M whatever its codon; a closed end is a stop codon, which the
-    translation leaves out. A codon the code cannot read, with an ambiguous base, matches any residue.
+    translation leaves out. At an open end, a codon the record carries only two bases of is translated
+    where those two decide the residue, `GG` as Gly, as INSDC translates it. A codon the code cannot read,
+    with an ambiguous base, matches any residue.
     """
     cds = coding.cds
     bases = coding.sequence[cds.start : cds.end + 1].decode('ascii')
     residues = [_CODE.get(bases[k : k + 3], 'X') for k in range(0, len(bases) - 2, 3)]
+    if cds.end_open and len(bases) % 3 == 2:
+        decided = {_CODE.get(bases[-2:] + base) for base in _BASES}
+        if len(decided) == 1:
+            residues.append(decided.pop() or 'X')
     if not cds.end_open:
         if not residues or residues[-1] != '*':
             return False
