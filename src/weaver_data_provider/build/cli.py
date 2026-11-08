@@ -16,6 +16,8 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --proteins Homo_sapiens.GRCh38.pep.all.fa.gz --genome genome/ \
         --alignments knownrefseq_alns.bam --alignments modelrefseq_alns.bam \
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
+    weaver-data-build genbank --release GB_2026_11 --records U14680.gb.gz --records U43746.gb.gz \
+        --gene2accession gene2accession.gz --hgnc hgnc_complete_set.txt --shards shards/
     weaver-data-build index --assembly GRCh38 --out store/ \
         shards/RS_2023_10-1a2b3c4d.bagz shards/RS_2024_08-5e6f7a8b.bagz
     weaver-data-build genome --assembly GRCh38 --fasta genomic.fna.gz --out genome/
@@ -34,7 +36,7 @@ import sys
 import warnings
 
 from weaver_data_provider import build
-from weaver_data_provider.build import ensembl, entrez, refseq
+from weaver_data_provider.build import ensembl, entrez, genbank, refseq
 from weaver_data_provider.build import genome as genome_build
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
@@ -105,6 +107,18 @@ def _ensembl(args: argparse.Namespace) -> None:
     )
     path = store_build.write_shard(
         ensembl.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
+    )
+    record = store_build.shard_record(path)
+    print(f'{path}  {record.records} bundles', file=sys.stderr)
+    print(path)
+
+
+def _genbank(args: argparse.Namespace) -> None:
+    release = genbank.Release(
+        release=args.release, records=tuple(args.records), gene2accession=args.gene2accession, hgnc=args.hgnc
+    )
+    path = store_build.write_shard(
+        genbank.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
     )
     record = store_build.shard_record(path)
     print(f'{path}  {record.records} bundles', file=sys.stderr)
@@ -241,6 +255,21 @@ def main(argv: list[str] | None = None) -> None:
         '--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name'
     )
     ens.set_defaults(run=_ensembl)
+
+    gb = commands.add_parser(
+        'genbank', help='cut GenBank mRNA records into a shard, on no assembly: it stacks under any store'
+    )
+    gb.add_argument('--release', required=True, help='a name for this cut of records, GB_2026_11')
+    gb.add_argument(
+        '--records', type=pathlib.Path, action='append', required=True, help='a GenBank flat file, gzipped; repeat'
+    )
+    gb.add_argument(
+        '--gene2accession', type=pathlib.Path, required=True, help="NCBI's gene2accession, gzipped, naming each gene"
+    )
+    gb.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
+    gb.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
+    gb.add_argument('--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name')
+    gb.set_defaults(run=_genbank)
 
     index = commands.add_parser('index', help='write the index and manifest over shards, in the order given')
     index.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)
