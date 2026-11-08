@@ -170,7 +170,8 @@ Ensembl beside one holding everything costs one more index and no copied shards.
 | GenBank CDS not translating   | left out, counted                            | its translation is not its bases' conceptual one    |
 | GenBank CDS from base 2 or 3  | left out, counted                            | a partial clone; the bundle states no reading frame |
 | GenBank CDS in another code   | left out, counted                            | the provider translates in the standard code        |
-| GenBank record, several CDS   | left out, counted                            | no one CDS is the record's                          |
+| GenBank, no one CDS's protein | left out, counted                            | several name one, or none does, or no translation   |
+| GenBank CDS of another shape  | left out, counted                            | a complement, order or remote location; not read    |
 | GenBank record not an mRNA    | left out, counted                            | a genomic record is not a transcript                |
 | RefSeq record among them      | left out, counted                            | its release's shard serves it, placed               |
 | UniProt canonical isoform     | a protein, versioned by its sequence version | also keyed under its isoform ID; no transcript      |

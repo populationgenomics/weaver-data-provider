@@ -64,6 +64,8 @@ _IUPAC = {
     'V': 'ACG',
     'N': 'ACGT',
 }
+# INSDC's residues for a codon undecided between two: Asx, Glx and Xle.
+_UNDECIDED = {'B': frozenset('ND'), 'Z': frozenset('QE'), 'J': frozenset('IL')}
 _REFUSALS = {
     flatfile.CdsChoiceError: 'no single CDS naming its protein',
     flatfile.CdsStatementError: 'a CDS the reader does not interpret',
@@ -113,7 +115,7 @@ def _read_records(paths: tuple[pathlib.Path, ...], left_out: collections.Counter
                 raise build.BuildError(f'{path}: {versioned} is in an earlier file too')
             seen.add(versioned)
         out.update(records)
-        left_out.update(_REFUSALS[type(error)] for error in refused.values())
+        left_out.update('a RefSeq record' if '_' in v else _REFUSALS[type(e)] for v, e in refused.items())
     return out
 
 
@@ -127,18 +129,27 @@ class _Coding:
     translation: bytes
 
 
-_ANY_RESIDUE = frozenset(_AMINO_ACIDS)
-
-
-def _residues(codon: str) -> frozenset[str]:
-    """The residues a codon can be in the standard code, reading an ambiguity code as every base it stands for.
-
-    A letter that is not a base can be any residue.
-    """
+def _expansions(codon: str) -> list[str]:
+    """The codons an ambiguity code stands for; none where a letter is not a base."""
     choices = [_IUPAC.get(base) for base in codon]
     if len(codon) != 3 or None in choices:
-        return _ANY_RESIDUE
-    return frozenset(_CODE[''.join(bases)] for bases in itertools.product(*(c for c in choices if c is not None)))
+        return []
+    return [''.join(bases) for bases in itertools.product(*(c for c in choices if c is not None))]
+
+
+def _residues(codon: str, *, initiator: bool = False) -> frozenset[str]:
+    """The residues a codon can be in the standard code; as an initiator, M where it can be one.
+
+    A codon with a letter that is not a base can be no residue, so no translation matches it.
+    """
+    return frozenset('M' if initiator and c in _INITIATORS else _CODE[c] for c in _expansions(codon))
+
+
+def _matches(residues: frozenset[str], stated: str) -> bool:
+    """Whether a residue the record states is one the codon can be, or names its indecision as INSDC does."""
+    if stated in residues:
+        return True
+    return len(residues) > 1 and (stated == 'X' or residues <= _UNDECIDED.get(stated, frozenset()))
 
 
 def _translates(coding: _Coding) -> bool:
@@ -147,7 +158,8 @@ def _translates(coding: _Coding) -> bool:
     A closed start is an initiator, ATG, CTG or TTG, written M. A closed end is a stop codon, which the
     translation leaves out, so a closed CDS is whole codons. At an open end, a codon the record carries only
     two bases of is translated where those two decide the residue, `GG` as Gly. An ambiguity code is read as
-    every base it stands for, so a codon it leaves undecided matches any residue it could be, or X.
+    every base it stands for, so a codon it leaves undecided matches any residue it could be, or X, or the
+    B, Z or J that names its indecision. A translation with no residue is no protein.
     """
     cds = coding.cds
     bases = coding.sequence[cds.start : cds.end + 1].decode('ascii')
@@ -160,11 +172,13 @@ def _translates(coding: _Coding) -> bool:
         if not possible or possible[-1] != {'*'}:
             return False
         possible.pop()
-    if not cds.start_open and possible and bases[:3] in _INITIATORS:
-        possible[0] = frozenset('M')
+    if not cds.start_open and possible:
+        possible[0] = _residues(bases[:3], initiator=True)
     translation = coding.translation.decode('ascii')
-    return len(translation) == len(possible) and all(
-        t in residues or (t == 'X' and len(residues) > 1) for residues, t in zip(possible, translation, strict=True)
+    return (
+        bool(translation)
+        and len(translation) == len(possible)
+        and all(_matches(residues, t) for residues, t in zip(possible, translation, strict=True))
     )
 
 
@@ -208,7 +222,8 @@ def _read_genes(path: pathlib.Path, wanted: set[str]) -> dict[str, dict[str, str
         header = fh.readline().lstrip('#').rstrip('\n').split('\t')
         if missing := _GENE2ACCESSION_COLUMNS - set(header):
             raise build.BuildError(f'{path}: columns {sorted(missing)} are not in the table; its schema has changed')
-        for row in csv.DictReader(fh, fieldnames=header, delimiter='\t'):
+        human = (line for line in fh if line.startswith(f'{_HUMAN}\t'))  # the file holds every taxon's genes
+        for row in csv.DictReader(human, fieldnames=header, delimiter='\t'):
             versioned = row['RNA_nucleotide_accession.version']
             if row['tax_id'] == _HUMAN and versioned in wanted:
                 out[versioned][row['GeneID']] = row['Symbol']

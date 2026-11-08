@@ -146,6 +146,14 @@ def test_an_open_start_is_bundled_open(tmp_path: pathlib.Path) -> None:
     assert (cds.start_index, cds.start_open, cds.end_open) == (0, True, False)
 
 
+def test_a_cds_stating_the_standard_code_is_bundled(tmp_path: pathlib.Path) -> None:
+    record = _record(
+        'ZZ000002.1', CODING, cds=CODING_CDS, protein=('ZZZ00002.1', CODING_PROTEIN), qualifiers=('/transl_table=1',)
+    )
+    (bundle,) = genbank.bundles(_release(tmp_path, [record], [('9606', '1001', 'ZZ000002.1', 'FWD')]))
+    assert [t.accession for t in bundle.transcripts] == ['ZZ000002']
+
+
 @pytest.mark.parametrize(
     ('sequence', 'cds', 'translation'),
     [
@@ -154,6 +162,8 @@ def test_an_open_start_is_bundled_open(tmp_path: pathlib.Path) -> None:
         ('ATGAAATRA', '1..9', 'MK'),  # TRA is a stop whatever R is
         ('ATGAANTAA', '1..9', 'MN'),  # AAN is Lys or Asn, so a record stating either is consistent
         ('ATGAANTAA', '1..9', 'MX'),  # or writing it undecided
+        ('ATGRAYTAA', '1..9', 'MB'),  # RAY is Asn or Asp, which INSDC writes B
+        ('NTGAAATAA', '1..9', 'MK'),  # NTG can be an initiator, written M
         ('ATGAAAGG', '1..>8', 'MKG'),  # at an open end, GG decides Gly whatever the third base
         ('ATGAAAAT', '1..>8', 'MK'),  # AT is Ile or Met, so it is not translated
     ],
@@ -185,6 +195,11 @@ _SECOND_CDS = (
             'no single CDS naming its protein',
         ),
         (_record('ZZ000003.1', CODING, cds='complement(3..17)'), 'a CDS the reader does not interpret'),
+        (
+            _record('ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV'), codon_start=2),
+            'a CDS the reader does not interpret',  # a closed start read from its second base
+        ),
+        (_record('NM_000003.1', CODING, cds='complement(3..17)'), 'a RefSeq record'),
         (
             _record('ZZ000003.1', CODING, cds='join(3..8,9..17)', protein=('ZZZ00003.1', 'MKLV')),
             'a CDS that is a join',
@@ -218,6 +233,26 @@ _SECOND_CDS = (
         ),
         (
             _record(
+                'ZZ000003.1',
+                CODING,
+                cds=CODING_CDS,
+                protein=('ZZZ00003.1', 'MKLV'),
+                qualifiers=('/ribosomal_slippage',),
+            ),
+            'a CDS marked with an exception',
+        ),
+        (
+            _record(
+                'ZZ000003.1',
+                CODING,
+                cds=CODING_CDS,
+                protein=('ZZZ00003.1', 'MKLV'),
+                qualifiers=('/artificial_location="heterogeneous population sequenced"',),
+            ),
+            'a CDS marked with an exception',
+        ),
+        (
+            _record(
                 'ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV'), qualifiers=('/trans_splicing',)
             ),
             'a CDS marked with an exception',
@@ -239,6 +274,21 @@ _SECOND_CDS = (
         (
             # ATG AAA CTG GTG TAC: a closed end with no stop codon
             _record('ZZ000003.1', 'GGATGAAACTGGTGTACCC', cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLVY')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # CTG begins this CDS, so it is written M, not Leu
+            _record('ZZ000003.1', 'CTGAAATAA', cds='1..9', protein=('ZZZ00003.1', 'LK')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # a CDS that is only its stop codon states no protein
+            _record('ZZ000003.1', 'TAA', cds='1..3', protein=('ZZZ00003.1', '')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # J is not a base, so no residue is the codon's
+            _record('ZZ000003.1', 'ATGAAJTAA', cds='1..9', protein=('ZZZ00003.1', 'MK')),
             "a translation that is not the CDS's",
         ),
         (
@@ -333,7 +383,10 @@ def test_weaver_predicts_a_bundled_records_protein(served: provider_mod.BundlePr
     assert mapper.c_to_p(weaver.parse('ZZ000001.1:c.4A>G')).format() == 'ZZZ00001.1:p.(Lys2Glu)'
 
 
-def test_weaver_reads_a_name_numbered_from_the_records_first_base(served: provider_mod.BundleProvider) -> None:
-    # n.6 is the record's sixth base, as BIC numbers U14680.1
+def test_weaver_accepts_a_name_numbered_from_the_records_first_base(served: provider_mod.BundleProvider) -> None:
+    # n.6 is the record's sixth base, A, as BIC numbers U14680.1
     assert weaver.parse('ZZ000001.1:n.6A>G').validate(served)
+
+
+def test_weaver_refuses_a_name_stating_another_base_than_the_record(served: provider_mod.BundleProvider) -> None:
     assert not weaver.parse('ZZ000001.1:n.6C>G').validate(served)

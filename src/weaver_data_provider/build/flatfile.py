@@ -22,6 +22,8 @@ _ACCESSION = re.compile(r'^[A-Z]+_?\d+\.\d+$')
 _EXCEPTIONS = frozenset(
     {'/exception', '/transl_except', '/ribosomal_slippage', '/trans_splicing', '/artificial_location'}
 )
+# A LOCUS line's length and molecule type, wherever a long locus name has pushed them: `5711 bp    mRNA`.
+_LOCUS_MOLECULE = re.compile(r'\s\d+ bp\s+(\S+)')
 _CDS_RANGE = re.compile(r'<?(\d+)\.\.>?(\d+)')
 _CDS_LOCATION = re.compile(rf'{_CDS_RANGE.pattern}|join\({_CDS_RANGE.pattern}(?:,{_CDS_RANGE.pattern})+\)')
 
@@ -68,7 +70,7 @@ class CdsChoiceError(UninterpretableError):
 class Record:
     """What a GenBank record states: its molecule, its CDS, and when read for them, its sequence and protein."""
 
-    molecule: str  # the LOCUS line's molecule type, `mRNA` or `DNA`; empty where the line states none
+    molecule: str  # the LOCUS line's molecule type: `mRNA`, `DNA`, `RNA`, ...; empty where it states none
     cds: RecordCds | None
     protein_id: str | None  # the CDS's protein_id
     sequence: bytes | None  # None unless read for sequences
@@ -256,8 +258,8 @@ def read_records(
                 if version is not None:
                     raise build.BuildError(f'{path}: {version} is not closed by // before the next record')
                 features = []
-                fields = line.split()
-                molecule = fields[4] if len(fields) > 4 and fields[3] == 'bp' else ''
+                found = _LOCUS_MOLECULE.search(line)
+                molecule = found.group(1) if found is not None else ''
             elif origin is not None and not line.startswith('//'):
                 origin.append(''.join(line.split()[1:]))
             elif line.startswith('VERSION'):
