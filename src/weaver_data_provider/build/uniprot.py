@@ -10,13 +10,12 @@ spelling NCBI Protein uses. An entry with alternative isoforms has its canonical
 displayed isoform's IDs, which are not always `-1`, and each other isoform under its ID alone,
 `P38398-2`, with the sequence this release gives it: an isoform ID has no version. An entry goes into the
 bundle of each gene it cross-references, by HGNC ID, or by GeneID where it names no gene HGNC holds.
-Left out, and counted in the build's report: an entry of another species, an entry naming no gene or one
-with no symbol, and an isoform whose sequence the release does not describe or the isoform file lacks.
-An entry keys the isoform IDs written under its primary accession or under a secondary one it alone holds,
-the IDs of an entry since merged into it; the displayed isoform also goes by another entry's ID where that
-entry lists the ID as described elsewhere. An ID under another entry's primary accession is that entry's to
-key; one under an accession several entries hold, an entry since split, names no one sequence and is left
-out and counted. A name the release gives two sequences fails the build.
+An isoform ID is keyed wherever the release's entries describe it with one sequence, whatever accession
+it is written under: an entry's own, one merged into it (CDC42's `P21181-4`), or one since split among
+several entries, each describing some of its IDs. Left out, and counted in the build's report: an entry of
+another species, an entry naming no gene or one with no symbol, an isoform whose sequence the release does
+not describe or the isoform file lacks, and an isoform ID entries describe with different sequences
+(`Q08AF8-1`, displayed by both entries it was split into).
 """
 
 from __future__ import annotations
@@ -66,7 +65,6 @@ class _Isoform:
 @dataclasses.dataclass(frozen=True)
 class _Entry:
     accession: str  # the primary accession
-    secondaries: tuple[str, ...]  # accessions merged into this entry, under which old isoform IDs were written
     sequence_version: int
     taxon: str
     symbol: str  # the entry's gene name, else its ORF name, else its HGNC cross-reference's symbol; or empty
@@ -118,7 +116,6 @@ def _entry(path: pathlib.Path, lines: list[str]) -> _Entry:
     hgnc_symbols = [r[2].strip().rstrip('.') for r in references if r[0] == 'HGNC' and len(r) > 2]
     return _Entry(
         accession=accessions[0],
-        secondaries=tuple(accessions[1:]),
         sequence_version=int(versions[0]),
         taxon=taxa[0],
         symbol=next(iter(names + hgnc_symbols), ''),
@@ -222,74 +219,27 @@ def _bundle(gene: _Gene) -> bundle_pb2.GeneBundle:
     return bundle
 
 
-@dataclasses.dataclass(frozen=True)
-class _Owners:
-    """Who may key an isoform ID, from every entry of the release."""
-
-    primaries: frozenset[str]  # every entry's primary accession
-    sole_secondaries: dict[str, str]  # a secondary accession one entry alone holds, to that entry's primary
-    described_elsewhere: frozenset[str]  # IDs an entry lists under its own accession as another entry's canonical
-
-    @classmethod
-    def of(cls, entries: list[_Entry]) -> _Owners:
-        primaries = frozenset(e.accession for e in entries)
-        holders = collections.Counter(s for e in entries for s in e.secondaries)
-        return cls(
-            primaries=primaries,
-            sole_secondaries={
-                s: e.accession for e in entries for s in e.secondaries if holders[s] == 1 and s not in primaries
-            },
-            described_elsewhere=frozenset(
-                i
-                for e in entries
-                for isoform in e.isoforms
-                if isoform.sequence == 'External'
-                for i in isoform.ids
-                if i.startswith(f'{e.accession}-')
-            ),
-        )
-
-    def owns(self, entry: _Entry, isoform_id: str) -> bool | None:
-        """Whether the entry keys an isoform ID: True; False where another entry does; None where none can.
-
-        An entry keys an ID written under its primary accession, or under a secondary accession it alone
-        holds. An ID under another entry's primary is that entry's; one under an accession several entries
-        hold, or none, names no one sequence.
-        """
-        accession = isoform_id.rpartition('-')[0]
-        if accession == entry.accession or self.sole_secondaries.get(accession) == entry.accession:
-            return True
-        return False if accession in self.primaries else None
-
-
-def _isoform_keys(
-    entry: _Entry, owners: _Owners, isoforms: dict[str, bytes], left_out: collections.Counter[str]
+def _descriptions(
+    entry: _Entry, isoforms: dict[str, bytes], left_out: collections.Counter[str]
 ) -> list[tuple[str, bytes]]:
-    """The isoform IDs an entry keys and the residues each names; what it cannot key is counted in `left_out`.
+    """Every isoform ID the entry describes, with the residues it gives it; an isoform it cannot give is counted.
 
-    The canonical goes by every ID of the displayed isoform the entry owns, and by another entry's ID that
-    entry lists as described here. Any other isoform goes by the IDs the entry owns, with the residues the
-    isoform file gives the first of its IDs it holds. An isoform described in another entry is that entry's.
+    The displayed isoform's IDs name the canonical's residues; any other isoform's, the residues the isoform
+    file gives the first of its IDs the file holds. An isoform the entry lists as described in another entry
+    is that entry's to describe.
     """
     out: list[tuple[str, bytes]] = []
     for isoform in entry.isoforms:
         if isoform.sequence == 'External':
             continue
-        owned = [i for i in isoform.ids if owners.owns(entry, i)]
-        nobody = [i for i in isoform.ids if owners.owns(entry, i) is None]
         if isoform.sequence == 'Displayed':
-            owned += [i for i in isoform.ids if i in owners.described_elsewhere and i not in owned]
-            nobody = [i for i in nobody if i not in owners.described_elsewhere]
-            out += [(i, entry.residues) for i in owned]
+            out += [(i, entry.residues) for i in isoform.ids]
         elif isoform.sequence == 'Not described':
-            left_out['isoforms the release does not describe'] += len(owned)
+            left_out['isoforms the release does not describe'] += 1
+        elif (residues := next((isoforms[i] for i in isoform.ids if i in isoforms), None)) is None:
+            left_out['isoforms the isoform file lacks'] += 1
         else:
-            residues = next((isoforms[i] for i in isoform.ids if i in isoforms), None)
-            if residues is None:
-                left_out['isoforms the isoform file lacks'] += len(owned)
-            else:
-                out += [(i, residues) for i in owned]
-        left_out['isoform IDs of an accession no one entry holds'] += len(nobody)
+            out += [(i, residues) for i in isoform.ids]
     return out
 
 
@@ -297,20 +247,16 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
     """The release's bundles, one per gene, in symbol order; the build's report goes to stderr.
 
     Raises:
-        build.BuildError: If an entry or the isoform file is malformed, an accession is in two entries, or the
-            release gives one name two sequences.
+        build.BuildError: If an entry or the isoform file is malformed, or an accession is in two entries.
     """
     isoforms = _read_isoforms(release.isoforms)
     by_hgnc_id = common.read_hgnc(release.hgnc, 'hgnc_id')
     by_gene_id = common.read_hgnc(release.hgnc, 'entrez_id')
-    genes: dict[str, _Gene] = {}
-    keyed: dict[str, bytes] = {}  # every name keyed, to the residues it names
     left_out: collections.Counter[str] = collections.Counter()
     read = list(_read_entries(release.entries))
     if duplicated := [a for a, n in collections.Counter(e.accession for e in read).items() if n > 1]:
         raise build.BuildError(f'{duplicated[0]}: in two entries')
-    owners = _Owners.of(read)
-    isoform_ids = 0
+    kept: list[tuple[_Entry, list[tuple[str, _Gene]], list[tuple[str, bytes]]]] = []
     for entry in read:
         if entry.taxon != _HUMAN:
             left_out['entries of another species'] += 1
@@ -322,15 +268,21 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
         if any(not gene.symbol and gene.hgnc is None for _, gene in named):
             left_out['entries naming a gene with no symbol'] += 1
             continue
-        keys = _isoform_keys(entry, owners, isoforms, left_out)
-        proteins = [(entry.accession, entry.sequence_version, entry.residues)] + [(i, 0, r) for i, r in keys]
-        isoform_ids += len(keys)
-        for accession, _, residues in proteins:
-            if keyed.setdefault(accession, residues) != residues:
-                raise build.BuildError(f'{accession}: the release gives it two sequences')
+        kept.append((entry, named, _descriptions(entry, isoforms, left_out)))
+    # Every sequence the release's bundled entries give each isoform ID; one gives the ID a sequence to name.
+    given: dict[str, set[bytes]] = collections.defaultdict(set)
+    for _, _, described in kept:
+        for isoform_id, residues in described:
+            given[isoform_id].add(residues)
+    left_out['isoform IDs entries give different sequences'] += sum(1 for r in given.values() if len(r) > 1)
+    genes: dict[str, _Gene] = {}
+    for entry, named, described in kept:
+        proteins = [(entry.accession, entry.sequence_version, entry.residues)]
+        proteins += [(i, 0, r) for i, r in described if len(given[i]) == 1]
         for key, gene in named:
             held = genes.setdefault(key, gene)
             held.proteins.update((accession, (version, residues)) for accession, version, residues in proteins)
+    isoform_ids = sum(1 for r in given.values() if len(r) == 1)
     print(
         f'{release.release}: {len(read)} entries, bundled in {len(genes)} genes with {isoform_ids} isoform IDs; '
         f'left out: {common.counted(left_out)}',

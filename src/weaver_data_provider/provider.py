@@ -23,8 +23,9 @@ from weaver_data_provider.v1 import bundle_pb2
 _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
-# UniProt's accession format, as its manual gives it, with an isoform's suffix or a sequence version.
-_UNIPROT = re.compile(r'^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+|\.\d+)?$')
+# UniProt's accession format, as its manual gives it, with an isoform's suffix or a sequence version: a bare
+# accession in that shape is also the shape of gene symbols (H2AZP1) no store need hold.
+_UNIPROT = re.compile(r'^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+|\.\d+)$')
 
 # Whose records a gene's or a region's answer lists unless the caller says otherwise.
 REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
@@ -233,7 +234,7 @@ class BundleProvider:
     def get_identifier_type(self, identifier: str) -> weaver.IdentifierType:
         """What the store holds the identifier as; for one it does not hold, what its namespace says.
 
-        UniProt's accession format is read last, after the gene symbols: `H2AC11` is a symbol in that shape.
+        UniProt's accession format, with an isoform's suffix or a version, is read last, after the gene symbols.
         """
         if identifier in self._genome or identifier.startswith(_GENOMIC):
             return weaver.IdentifierType.GenomicAccession

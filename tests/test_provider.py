@@ -635,3 +635,9 @@ def test_a_gene_symbol_in_the_shape_of_a_uniprot_accession_is_a_gene(
     store_build.write_index(tmp_path / 'h2', [shard], assembly=testing.ASSEMBLY)
     provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'h2')), built.genome)
     assert provider.get_identifier_type('H2AC11') == weaver.IdentifierType.GeneSymbol
+
+
+def test_a_bare_name_in_the_shape_of_a_uniprot_accession_the_store_does_not_hold_is_unknown(
+    provider: provider_mod.BundleProvider,
+) -> None:
+    assert provider.get_identifier_type('H2AZP1') == weaver.IdentifierType.Unknown  # an HGNC pseudogene's symbol

@@ -255,10 +255,16 @@ An isoform ID has no version, so an isoform is keyed by its bare ID, `P38398-2`,
 gives it. The canonical of an entry with isoforms is keyed twice: under its sequence version, and under the isoform ID
 the release marks as the one it displays. That ID is not always `-1`. In release 2026_03 it is another number in 481 of
 the 10,684 human entries with isoforms, and 116 of them assign no `-1` at all. An ID the release does not assign is not
-keyed: `Q96AP0-1` is not in the reference data, although UniProt's own web service answers it with the canonical. A
-shard cut from one release holds one sequence per isoform ID; where shards from two releases are stacked, the later one
-answers, as for every record. The store does not number the sequences an isoform ID has named over time. A `P38398-2.2`
-would be a name no publisher issued, which a caller could then write and nobody else resolve.
+keyed: `Q96AP0-1` is not in the reference data, although UniProt's own web service answers it with the canonical.
+
+An isoform ID is keyed wherever the release's entries describe it with one sequence, whatever accession it is written
+under. Entries are merged and split, and the IDs of the old entry are kept: CDC42's displayed isoform is also
+`P21181-4`, from an entry merged into it, and the IDs of O60344 are described among the three entries it was split into,
+each describing some. An ID two entries describe with different sequences names no one sequence and is left out,
+counted: in 2026_04 that is `Q08AF8-1`, displayed by both entries it was split into, whose sequences differ. A shard cut
+from one release holds one sequence per isoform ID; where shards from two releases are stacked, the later one answers,
+as for every record. The store does not number the sequences an isoform ID has named over time. A `P38398-2.2` would be
+a name no publisher issued, which a caller could then write and nobody else resolve.
 
 A name with no version is not resolved by the provider. It answers a versioned name and refuses a bare one, unless the
 record has no version of its own. It also lists what it holds under a bare accession: the versions, newest first, or for
@@ -276,11 +282,13 @@ shard was cut from, and has no MANE or Select tag.
 ### The provider asks the store what kind an accession is
 
 The provider decides whether an accession is a genomic sequence, a transcript or a protein from a fixed list of
-prefixes. That list cannot name GenBank or UniProt accessions, which follow no prefix scheme a reader could rely on. The
-provider instead asks its key tables: an accession held as a transcript is a transcript, one held as a protein is a
-protein, a sequence of the genome is genomic. An accession the store does not hold is still the kind its reference
-namespace says, `NM_` a transcript and `NP_` a protein, so a name citing a version no release held is answered "not in
-the reference data" rather than refused as an unknown name.
+prefixes. That list cannot name GenBank accessions, which follow no prefix scheme a reader could rely on. The provider
+instead asks its key tables: an accession held as a transcript is a transcript, one held as a protein is a protein, a
+sequence of the genome is genomic. An accession the store does not hold is still the kind its reference namespace says,
+`NM_` a transcript and `NP_` a protein, so a name citing a version no release held is answered "not in the reference
+data" rather than refused as an unknown name. A UniProt isoform ID or versioned accession the store does not hold is a
+protein too, by UniProt's documented accession format, read after the gene symbols; a bare name in that format is not
+taken for one, since gene symbols take the same shape (`H2AZP1`).
 
 ### A store holding these shards is format version 2
 
