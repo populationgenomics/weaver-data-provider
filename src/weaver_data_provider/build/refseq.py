@@ -320,7 +320,7 @@ class _Loaded:
     mane: dict[str, tuple[str, str]]
     records: dict[str, flatfile.Record]  # by versioned accession
     status: dict[str, bundle_pb2.TranscriptStatus] | None  # by versioned accession; None for an annotation release
-    left_out: dict[str, str]  # transcripts left out for a CDS statement the reader refuses, with the reason
+    left_out: dict[str, flatfile.UninterpretableError]  # left out for a CDS statement the reader refuses
     other_protein: list[str]  # transcripts whose annotation names another protein than their record does
 
     def protein_of(self, record: _Transcript) -> tuple[str, int] | None:
@@ -438,7 +438,7 @@ def _other_protein(annotation: _Annotation, records: dict[str, flatfile.Record])
 
 def _load(release: Release) -> _Loaded:
     annotation = _read_annotation(release.annotation)
-    left_out: dict[str, str] = {}
+    left_out: dict[str, flatfile.UninterpretableError] = {}
     records = flatfile.read_records(
         release.records, sequences=release.transcripts is None, left_out=left_out if release.historical else None
     )

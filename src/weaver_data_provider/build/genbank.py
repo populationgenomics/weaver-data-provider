@@ -6,13 +6,15 @@ complete set, for the gene's identity. A record states no place on any genome, s
 provider serves the record on its own sequence and refuses what needs a genome
 (`docs/design/genbank-and-uniprot.md`).
 
-Bundled: every mRNA record with one CDS naming its protein, whose translation is the conceptual
-translation of the CDS's bases, of a human gene `gene2accession` names. A record NCBI ties to several
-genes goes into each one's bundle. Left out, and counted by reason in the build's report, rather than
-bundled with a CDS or protein the record does not state plainly: a record that is not an mRNA; one with
-no CDS, which means the CDS was not annotated, not that the RNA is non-coding; a CDS the reader does not
-interpret, a join (a programmed frameshift), one read from other than its first base, or one marked with
-an exception; a translation that is not the CDS's; and a record of no human gene.
+Bundled: every INSDC mRNA record with one CDS naming its protein, whose translation is the conceptual
+translation of the CDS's bases in the standard code, of a human gene `gene2accession` names. A record
+NCBI ties to several genes goes into each one's bundle. Left out, and counted by reason in the build's
+report, rather than bundled with a CDS or protein the record does not state plainly: a RefSeq record,
+which a RefSeq release's shard serves with its placement; a record that is not an mRNA; one with no CDS,
+which means the CDS was not annotated, not that the RNA is non-coding; one with no single CDS naming its
+protein; a CDS the reader does not interpret, a join (a programmed frameshift), one read from other than
+its first base, one in another genetic code, or one marked with an exception; a translation that is not
+the CDS's; and a record of no human gene.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import collections
 import csv
 import dataclasses
 import gzip
+import itertools
 import pathlib
 import re
 import sys
@@ -32,15 +35,38 @@ from weaver_data_provider.v1 import bundle_pb2
 
 _HUMAN = '9606'
 _GENE2ACCESSION_COLUMNS = frozenset({'tax_id', 'GeneID', 'RNA_nucleotide_accession.version', 'Symbol'})
-_VERSIONED = re.compile(r'^([A-Z]+_?\d+)\.(\d+)$')
+_VERSIONED = re.compile(r'^([A-Z]+\d+)\.(\d+)$')
 _BASES = 'TCAG'
 _AMINO_ACIDS = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG'
-# The standard genetic code, NCBI's table 1; a codon with any other base translates as X.
+# The standard genetic code, NCBI's table 1, and the codons it lets begin a CDS, each read there as M.
 _CODE = {
     a + b + c: _AMINO_ACIDS[16 * i + 4 * j + k]
     for i, a in enumerate(_BASES)
     for j, b in enumerate(_BASES)
     for k, c in enumerate(_BASES)
+}
+_INITIATORS = frozenset({'ATG', 'CTG', 'TTG'})
+_STANDARD_CODE = 1
+_IUPAC = {
+    'A': 'A',
+    'C': 'C',
+    'G': 'G',
+    'T': 'T',
+    'R': 'AG',
+    'Y': 'CT',
+    'K': 'GT',
+    'M': 'AC',
+    'S': 'CG',
+    'W': 'AT',
+    'B': 'CGT',
+    'D': 'AGT',
+    'H': 'ACT',
+    'V': 'ACG',
+    'N': 'ACGT',
+}
+_REFUSALS = {
+    flatfile.CdsChoiceError: 'no single CDS naming its protein',
+    flatfile.CdsStatementError: 'a CDS the reader does not interpret',
 }
 
 
@@ -60,9 +86,14 @@ class Release:
 
 
 def _split(versioned: str) -> tuple[str, int]:
+    """An INSDC accession and its version.
+
+    Raises:
+        build.BuildError: If the string is not a versioned INSDC accession.
+    """
     match = _VERSIONED.match(versioned)
     if match is None:
-        raise build.BuildError(f'{versioned!r} is not a versioned accession')
+        raise build.BuildError(f'{versioned!r} is not a versioned INSDC accession')
     return match.group(1), int(match.group(2))
 
 
@@ -73,17 +104,16 @@ def _read_records(paths: tuple[pathlib.Path, ...], left_out: collections.Counter
         build.BuildError: If a version is in two files, or a file breaks what the reader relies on.
     """
     out: dict[str, flatfile.Record] = {}
+    seen: set[str] = set()
     for path in paths:
-        refused: dict[str, str] = {}
-        records = flatfile.read_records(
-            path, sequences=True, left_out=refused, leave_out=(flatfile.UninterpretableError,)
-        )
+        refused: dict[str, flatfile.UninterpretableError] = {}
+        records = flatfile.read_records(path, sequences=True, left_out=refused, leave_out=tuple(_REFUSALS))
         for versioned in (*records, *refused):
-            if versioned in out:
+            if versioned in seen:
                 raise build.BuildError(f'{path}: {versioned} is in an earlier file too')
+            seen.add(versioned)
         out.update(records)
-        if refused:
-            left_out['a CDS the reader does not interpret'] += len(refused)
+        left_out.update(_REFUSALS[type(error)] for error in refused.values())
     return out
 
 
@@ -97,29 +127,45 @@ class _Coding:
     translation: bytes
 
 
-def _translates(coding: _Coding) -> bool:
-    """Whether the record's translation is the conceptual translation of its CDS's bases.
+_ANY_RESIDUE = frozenset(_AMINO_ACIDS)
 
-    A closed start is the initiator, written M whatever its codon; a closed end is a stop codon, which the
-    translation leaves out. At an open end, a codon the record carries only two bases of is translated
-    where those two decide the residue, `GG` as Gly, as INSDC translates it. A codon the code cannot read,
-    with an ambiguous base, matches any residue.
+
+def _residues(codon: str) -> frozenset[str]:
+    """The residues a codon can be in the standard code, reading an ambiguity code as every base it stands for.
+
+    A letter that is not a base can be any residue.
+    """
+    choices = [_IUPAC.get(base) for base in codon]
+    if len(codon) != 3 or None in choices:
+        return _ANY_RESIDUE
+    return frozenset(_CODE[''.join(bases)] for bases in itertools.product(*(c for c in choices if c is not None)))
+
+
+def _translates(coding: _Coding) -> bool:
+    """Whether the record's translation is the conceptual translation of its CDS's bases, as INSDC writes it.
+
+    A closed start is an initiator, ATG, CTG or TTG, written M. A closed end is a stop codon, which the
+    translation leaves out, so a closed CDS is whole codons. At an open end, a codon the record carries only
+    two bases of is translated where those two decide the residue, `GG` as Gly. An ambiguity code is read as
+    every base it stands for, so a codon it leaves undecided matches any residue it could be, or X.
     """
     cds = coding.cds
     bases = coding.sequence[cds.start : cds.end + 1].decode('ascii')
-    residues = [_CODE.get(bases[k : k + 3], 'X') for k in range(0, len(bases) - 2, 3)]
-    if cds.end_open and len(bases) % 3 == 2:
-        decided = {_CODE.get(bases[-2:] + base) for base in _BASES}
-        if len(decided) == 1:
-            residues.append(decided.pop() or 'X')
+    if not cds.end_open and len(bases) % 3:
+        return False
+    possible = [_residues(bases[k : k + 3]) for k in range(0, len(bases) - 2, 3)]
+    if cds.end_open and len(bases) % 3 == 2 and len(last := _residues(bases[-2:] + 'N')) == 1:
+        possible.append(last)
     if not cds.end_open:
-        if not residues or residues[-1] != '*':
+        if not possible or possible[-1] != {'*'}:
             return False
-        residues.pop()
-    if not cds.start_open and residues:
-        residues[0] = 'M'
+        possible.pop()
+    if not cds.start_open and possible and bases[:3] in _INITIATORS:
+        possible[0] = frozenset('M')
     translation = coding.translation.decode('ascii')
-    return len(translation) == len(residues) and all(r in ('X', t) for r, t in zip(residues, translation, strict=True))
+    return len(translation) == len(possible) and all(
+        t in residues or (t == 'X' and len(residues) > 1) for residues, t in zip(possible, translation, strict=True)
+    )
 
 
 def _coding(versioned: str, record: flatfile.Record) -> _Coding | str:
@@ -128,19 +174,24 @@ def _coding(versioned: str, record: flatfile.Record) -> _Coding | str:
     Raises:
         build.BuildError: If a record with a CDS lacks its sequence or protein, which the reader never returns.
     """
+    if '_' in versioned:
+        return 'a RefSeq record'
     if record.molecule != 'mRNA':
         return 'not an mRNA'
-    if record.cds is None:
+    cds = record.cds
+    if cds is None:
         return 'no CDS'
     if record.sequence is None or record.protein is None:
         raise build.BuildError(f'{versioned}: read with a CDS but without its sequence or protein')
-    if record.joined:
+    if cds.joined:
         return 'a CDS that is a join'
-    if record.codon_start != 1:
+    if cds.codon_start != 1:
         return 'a CDS read from other than its first base'
-    if record.exceptions:
+    if cds.translation_table != _STANDARD_CODE:
+        return 'a CDS in another genetic code'
+    if cds.exceptions:
         return 'a CDS marked with an exception'
-    coding = _Coding(record.sequence, record.cds, *record.protein)
+    coding = _Coding(record.sequence, cds, *record.protein)
     if not _translates(coding):
         return "a translation that is not the CDS's"
     return coding
@@ -230,6 +281,7 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
         else:
             kept[versioned] = coding
     genes = _read_genes(release.gene2accession, set(kept))
+    hgnc = common.read_hgnc(release.hgnc, 'entrez_id')
     by_gene: dict[str, tuple[str, list[str]]] = {}
     for versioned in kept:
         if versioned not in genes:
@@ -243,7 +295,6 @@ def bundles(release: Release) -> Iterator[bundle_pb2.GeneBundle]:
         f'left out: {common.counted(left_out)}',
         file=sys.stderr,
     )
-    hgnc = common.read_hgnc(release.hgnc, 'entrez_id')
     for gene_id in sorted(by_gene, key=int):
         symbol, versions = by_gene[gene_id]
         yield _bundle(gene_id, symbol, sorted(versions), kept, hgnc)

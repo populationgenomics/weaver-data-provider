@@ -168,6 +168,11 @@ Ensembl beside one holding everything costs one more index and no copied shards.
 | GenBank CDS with an exception | left out, counted                            | its translation is not the CDS's                    |
 | GenBank CDS that is a join    | left out, counted                            | a frameshift: no one reading frame                  |
 | GenBank CDS not translating   | left out, counted                            | its translation is not its bases' conceptual one    |
+| GenBank CDS from base 2 or 3  | left out, counted                            | a partial clone; the bundle states no reading frame |
+| GenBank CDS in another code   | left out, counted                            | the provider translates in the standard code        |
+| GenBank record, several CDS   | left out, counted                            | no one CDS is the record's                          |
+| GenBank record not an mRNA    | left out, counted                            | a genomic record is not a transcript                |
+| RefSeq record among them      | left out, counted                            | its release's shard serves it, placed               |
 | UniProt canonical isoform     | a protein, versioned by its sequence version | also keyed under its isoform ID; no transcript      |
 | UniProt other isoform         | a protein, under its bare ID                 | one sequence per shard, as the release states it    |
 

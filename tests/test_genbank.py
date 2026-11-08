@@ -44,8 +44,9 @@ def _record(
     protein: tuple[str, str] | None = None,
     codon_start: int = 1,
     qualifiers: tuple[str, ...] = (),
+    features: tuple[str, ...] = (),
 ) -> str:
-    """One GenBank flat-file record as NCBI writes it: the CDS with its qualifiers, then a numbered ORIGIN."""
+    """One GenBank flat-file record as NCBI writes it: the CDS and its qualifiers, any further features, ORIGIN."""
     accession = versioned.split('.')[0]
     lines = [
         f'LOCUS       {accession}  {len(sequence)} bp    {molecule}    linear   PRI 01-JAN-2026',
@@ -62,6 +63,7 @@ def _record(
         if protein is not None:
             lines.append(f'                     /protein_id="{protein[0]}"')
             lines.append(f'                     /translation="{protein[1]}"')
+    lines += features
     lines.append('ORIGIN')
     for k in range(0, len(sequence), 60):
         tens = [sequence[j : j + 10].lower() for j in range(k, min(k + 60, len(sequence)), 10)]
@@ -115,12 +117,6 @@ def test_a_coding_mrna_is_bundled_with_its_sequence_cds_and_protein(tmp_path: pa
     assert (protein.transcript_accession, protein.transcript_version) == ('ZZ000001', 1)
 
 
-def test_a_genbank_transcript_is_bundled_without_a_placement(tmp_path: pathlib.Path) -> None:
-    release = _release(tmp_path, [_coding('ZZ000001.1')], [('9606', '1001', 'ZZ000001.1', 'FWD')])
-    (bundle,) = genbank.bundles(release)
-    assert not bundle.transcripts[0].alignments
-
-
 def test_the_genes_identity_is_hgncs(tmp_path: pathlib.Path) -> None:
     release = _release(tmp_path, [_coding('ZZ000001.1')], [('9606', '1001', 'ZZ000001.1', 'OLDFWD')])
     (bundle,) = genbank.bundles(release)
@@ -151,28 +147,58 @@ def test_an_open_start_is_bundled_open(tmp_path: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ('sequence', 'translation'),
+    ('sequence', 'cds', 'translation'),
     [
-        ('ATGAAAGG', 'MKG'),  # GG decides Gly whatever the third base, so INSDC translates it
-        ('ATGAAAAT', 'MK'),  # AT is Ile or Met, so it does not
+        ('CTGAAATAA', '1..9', 'MK'),  # CTG begins a CDS, written M
+        ('ATGCTNTAA', '1..9', 'ML'),  # CTN is Leu whatever N is
+        ('ATGAAATRA', '1..9', 'MK'),  # TRA is a stop whatever R is
+        ('ATGAANTAA', '1..9', 'MN'),  # AAN is Lys or Asn, so a record stating either is consistent
+        ('ATGAANTAA', '1..9', 'MX'),  # or writing it undecided
+        ('ATGAAAGG', '1..>8', 'MKG'),  # at an open end, GG decides Gly whatever the third base
+        ('ATGAAAAT', '1..>8', 'MK'),  # AT is Ile or Met, so it is not translated
     ],
 )
-def test_a_codon_cut_short_at_an_open_end_is_translated_where_its_two_bases_decide_it(
-    tmp_path: pathlib.Path, sequence: str, translation: str
+def test_a_cds_translated_as_insdc_translates_it_is_bundled(
+    tmp_path: pathlib.Path, sequence: str, cds: str, translation: str
 ) -> None:
-    record = _record('ZZ000002.1', sequence, cds='1..>8', protein=('ZZZ00002.1', translation))
+    record = _record('ZZ000002.1', sequence, cds=cds, protein=('ZZZ00002.1', translation))
     (bundle,) = genbank.bundles(_release(tmp_path, [record], [('9606', '1001', 'ZZ000002.1', 'FWD')]))
     assert bundle.proteins[0].sequence_digest == refget.digest(translation.encode())
+
+
+_SECOND_CDS = (
+    '     CDS             3..8',
+    '                     /protein_id="ZZZ00009.1"',
+    '                     /translation="MK"',
+)
 
 
 @pytest.mark.parametrize(
     ('record', 'reason'),
     [
+        (_record('NM_000003.1', CODING, cds=CODING_CDS, protein=('NP_000003.1', 'MKLV')), 'a RefSeq record'),
         (_record('ZZ000003.1', CODING), 'no CDS'),
         (_record('ZZ000003.1', CODING, molecule='DNA', cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV')), 'not an mRNA'),
+        (_record('ZZ000003.1', CODING, cds=CODING_CDS), 'no single CDS naming its protein'),
+        (
+            _record('ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV'), features=_SECOND_CDS),
+            'no single CDS naming its protein',
+        ),
+        (_record('ZZ000003.1', CODING, cds='complement(3..17)'), 'a CDS the reader does not interpret'),
         (
             _record('ZZ000003.1', CODING, cds='join(3..8,9..17)', protein=('ZZZ00003.1', 'MKLV')),
             'a CDS that is a join',
+        ),
+        (
+            # C, then AAA CTG GTG TAA: a partial CDS whose first codon starts at its second base
+            _record('ZZ000003.1', 'CAAACTGGTGTAA', cds='<1..13', protein=('ZZZ00003.1', 'KLV'), codon_start=2),
+            'a CDS read from other than its first base',
+        ),
+        (
+            _record(
+                'ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV'), qualifiers=('/transl_table=2',)
+            ),
+            'a CDS in another genetic code',
         ),
         (
             _record(
@@ -181,21 +207,60 @@ def test_a_codon_cut_short_at_an_open_end_is_translated_where_its_two_bases_deci
             'a CDS marked with an exception',
         ),
         (
+            _record(
+                'ZZ000003.1',
+                CODING,
+                cds=CODING_CDS,
+                protein=('ZZZ00003.1', 'MKLV'),
+                qualifiers=('/transl_except=(pos:6..8,aa:Sec)',),
+            ),
+            'a CDS marked with an exception',
+        ),
+        (
+            _record(
+                'ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV'), qualifiers=('/trans_splicing',)
+            ),
+            'a CDS marked with an exception',
+        ),
+        (
             _record('ZZ000003.1', CODING, cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLA')),
             "a translation that is not the CDS's",
         ),
         (
-            # C, then AAA CTG GTG TAA: a partial CDS whose first codon starts at its second base
-            _record('ZZ000003.1', 'CAAACTGGTGTAA', cds='<1..13', protein=('ZZZ00003.1', 'KLV'), codon_start=2),
-            'a CDS read from other than its first base',
+            # AAA AAA CTG GTG TAA: AAA does not begin a CDS, so its first residue is Lys, not Met
+            _record('ZZ000003.1', 'GGAAAAAACTGGTGTAACC', cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLV')),
+            "a translation that is not the CDS's",
         ),
-        (_record('ZZ000003.1', CODING, cds=CODING_CDS), 'a CDS the reader does not interpret'),
+        (
+            # a closed CDS one base longer than its whole codons
+            _record('ZZ000003.1', CODING, cds='3..18', protein=('ZZZ00003.1', 'MKLV')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # ATG AAA CTG GTG TAC: a closed end with no stop codon
+            _record('ZZ000003.1', 'GGATGAAACTGGTGTACCC', cds=CODING_CDS, protein=('ZZZ00003.1', 'MKLVY')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # AAN is Lys or Asn, so a record translating it Glu states another protein
+            _record('ZZ000003.1', 'ATGAANTAA', cds='1..9', protein=('ZZZ00003.1', 'ME')),
+            "a translation that is not the CDS's",
+        ),
+        (
+            # CTN is Leu, so a record translating it Trp states another protein
+            _record('ZZ000003.1', 'ATGCTNTAA', cds='1..9', protein=('ZZZ00003.1', 'MW')),
+            "a translation that is not the CDS's",
+        ),
     ],
 )
 def test_a_record_whose_cds_or_protein_is_not_plain_is_left_out_and_counted(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str], record: str, reason: str
 ) -> None:
-    genes = [('9606', '1001', 'ZZ000001.1', 'FWD'), ('9606', '1001', 'ZZ000003.1', 'FWD')]
+    genes = [
+        ('9606', '1001', 'ZZ000001.1', 'FWD'),
+        ('9606', '1001', 'ZZ000003.1', 'FWD'),
+        ('9606', '1001', 'NM_000003.1', 'FWD'),
+    ]
     (bundle,) = genbank.bundles(_release(tmp_path, [_coding('ZZ000001.1'), record], genes))
     assert [t.accession for t in bundle.transcripts] == ['ZZ000001']
     assert f'{reason} 1' in capsys.readouterr().err
@@ -212,6 +277,19 @@ def test_a_record_of_no_human_gene_is_left_out_and_counted(
 
 def test_a_version_in_two_files_is_refused(tmp_path: pathlib.Path) -> None:
     first = _gz(tmp_path / 'first.gb.gz', _coding('ZZ000001.1'))
+    second = _gz(tmp_path / 'second.gb.gz', _coding('ZZ000001.1'))
+    release = genbank.Release(
+        release='GB_1',
+        records=(first, second),
+        gene2accession=_gene2accession(tmp_path / 'g2a.gz', [('9606', '1001', 'ZZ000001.1', 'FWD')]),
+        hgnc=_hgnc(tmp_path / 'hgnc.txt'),
+    )
+    with pytest.raises(build.BuildError, match=r'ZZ000001\.1 is in an earlier file too'):
+        list(genbank.bundles(release))
+
+
+def test_a_version_one_file_holds_uninterpretable_and_another_holds_is_refused(tmp_path: pathlib.Path) -> None:
+    first = _gz(tmp_path / 'first.gb.gz', _record('ZZ000001.1', CODING, cds=CODING_CDS))
     second = _gz(tmp_path / 'second.gb.gz', _coding('ZZ000001.1'))
     release = genbank.Release(
         release='GB_1',
