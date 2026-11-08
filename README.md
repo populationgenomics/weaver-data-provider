@@ -25,6 +25,7 @@ weaver-data-build status ...     # each RefSeq version's status in Entrez, the o
 weaver-data-build historical ... # NCBI's historical set of RefSeq versions, as a shard to stack under a release's
 weaver-data-build ensembl ...    # one Ensembl release's, placed at its exons and checked against the genome
 weaver-data-build genbank ...    # GenBank mRNA records, unplaced, as a shard to stack under any store
+weaver-data-build uniprot ...    # one UniProt release's human proteins and isoforms, as a shard likewise
 weaver-data-build index ...      # the index and manifest over an ordered list of shards
 weaver-data-build genome ...     # the assembly, cut into compressed blocks
 ```

@@ -18,6 +18,8 @@ r"""`weaver-data-build`: cut a release into a shard, index shards into a store, 
         --hgnc hgnc_complete_set.txt --mane MANE.summary.txt.gz --shards shards/
     weaver-data-build genbank --release GB_2026_11 --records U14680.gb.gz --records U43746.gb.gz \
         --gene2accession gene2accession.gz --hgnc hgnc_complete_set.txt --shards shards/
+    weaver-data-build uniprot --release 2026_04 --entries uniprot_sprot_human.dat.gz \
+        --isoforms uniprot_sprot_varsplic.fasta.gz --hgnc hgnc_complete_set.txt --shards shards/
     weaver-data-build index --assembly GRCh38 --out store/ \
         shards/RS_2023_10-1a2b3c4d.bagz shards/RS_2024_08-5e6f7a8b.bagz
     weaver-data-build genome --assembly GRCh38 --fasta genomic.fna.gz --out genome/
@@ -36,7 +38,7 @@ import sys
 import warnings
 
 from weaver_data_provider import build
-from weaver_data_provider.build import ensembl, entrez, genbank, refseq
+from weaver_data_provider.build import ensembl, entrez, genbank, refseq, uniprot
 from weaver_data_provider.build import genome as genome_build
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2
@@ -119,6 +121,16 @@ def _genbank(args: argparse.Namespace) -> None:
     )
     path = store_build.write_shard(
         genbank.bundles(release), args.shards, release=args.release, inputs=release.inputs(), prefix=args.prefix
+    )
+    record = store_build.shard_record(path)
+    print(f'{path}  {record.records} bundles', file=sys.stderr)
+    print(path)
+
+
+def _uniprot(args: argparse.Namespace) -> None:
+    release = uniprot.Release(release=args.release, entries=tuple(args.entries), isoforms=args.isoforms, hgnc=args.hgnc)
+    path = store_build.write_shard(
+        uniprot.bundles(release), args.shards, release=f'UP_{args.release}', inputs=release.inputs(), prefix=args.prefix
     )
     record = store_build.shard_record(path)
     print(f'{path}  {record.records} bundles', file=sys.stderr)
@@ -270,6 +282,26 @@ def main(argv: list[str] | None = None) -> None:
     gb.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
     gb.add_argument('--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name')
     gb.set_defaults(run=_genbank)
+
+    up = commands.add_parser(
+        'uniprot',
+        help="cut one UniProt release's human entries into a shard, on no assembly: it stacks under any store",
+    )
+    up.add_argument('--release', required=True, help="UniProt's release identifier, 2026_04")
+    up.add_argument(
+        '--entries',
+        type=pathlib.Path,
+        action='append',
+        required=True,
+        help='entries in flat-file format, gzipped: uniprot_sprot_human.dat.gz, and the TrEMBL file if wanted',
+    )
+    up.add_argument(
+        '--isoforms', type=pathlib.Path, required=True, help="the release's uniprot_sprot_varsplic.fasta.gz"
+    )
+    up.add_argument('--hgnc', type=pathlib.Path, required=True, help="HGNC's complete set, TSV")
+    up.add_argument('--shards', type=pathlib.Path, required=True, help='the directory the shard is written into')
+    up.add_argument('--prefix', default='', help='prepended to the shard name, for a layout that orders shards by name')
+    up.set_defaults(run=_uniprot)
 
     index = commands.add_parser('index', help='write the index and manifest over shards, in the order given')
     index.add_argument('--assembly', choices=sorted(_ASSEMBLIES), required=True)

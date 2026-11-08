@@ -166,6 +166,10 @@ class BundleProvider:
                 for protein in bundle.proteins:
                     if store_mod.protein_name(protein) == accession:
                         return _sequence(bundle, protein.sequence_digest)
+            if '.' not in accession and self._store.holds_protein(accession):
+                raise weaver.DataProviderError(
+                    f'{accession}: a protein is held per version; give the versioned accession'
+                )
             raise weaver.DataProviderError(f'{accession}: not in the reference data')
         bundle, transcript = self._transcript(accession)
         return _sequence(bundle, transcript.sequence_digest)
