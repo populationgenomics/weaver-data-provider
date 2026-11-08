@@ -175,6 +175,15 @@ def test_a_genome_is_format_version_1(built: testing.Reference) -> None:
     assert genome_mod.read_catalogue(built.genome.root).format_version == 1
 
 
+def test_a_format_version_older_than_the_reader_is_refused(built: testing.Reference) -> None:
+    root = pathlib.Path(built.genome.root)
+    catalogue = genome_mod.read_catalogue(str(root))
+    catalogue.format_version = weaver_data_provider.MIN_FORMAT_VERSION - 1
+    _rewrite_catalogue(root, catalogue)
+    with pytest.raises(genome_mod.GenomeError, match='format version'):
+        genome_mod.Genome(str(root))
+
+
 def test_a_format_version_newer_than_the_reader_is_refused(built: testing.Reference) -> None:
     root = pathlib.Path(built.genome.root)
     catalogue = genome_mod.read_catalogue(str(root))

@@ -25,6 +25,7 @@ _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
 
 # Whose records a gene's or a region's answer lists unless the caller says otherwise.
 REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
+_PUBLISHERS = frozenset(bundle_pb2.Publisher.values()) - {bundle_pb2.PUBLISHER_UNSPECIFIED}
 
 # Whose accession a digest names first, when several publishers hold the residues; a protein no transcript
 # encodes, UniProt's, after all of these. The order keeps the answer stable as shards are stacked.
@@ -67,16 +68,22 @@ class BundleProvider:
             store: The store, on the genome's assembly.
             genome: The genome.
             listed_publishers: Whose transcripts, and the proteins they encode, a gene's or a region's answer
-                lists. A record from any publisher is served when named.
+                lists; a protein no transcript encodes is never listed. A record from any publisher is served
+                when named.
             include_retired: List retired versions, superseded or suppressed, for a gene and over a region too.
 
         Raises:
-            ValueError: If the store and the genome are on different assemblies.
+            ValueError: If the store and the genome are on different assemblies, or `listed_publishers` is empty
+                or names an undefined publisher.
         """
         if store.assembly != genome.assembly:
             name = bundle_pb2.Assembly.Name
             raise ValueError(f'store is on {name(store.assembly)}, genome on {name(genome.assembly)}')
         self._listed_publishers = frozenset(listed_publishers)
+        if not self._listed_publishers or not self._listed_publishers <= _PUBLISHERS:
+            raise ValueError(
+                f'listed_publishers names no publisher, or one undefined: {sorted(self._listed_publishers)}'
+            )
         self._store = store
         self._genome = genome
         self._include_retired = include_retired
@@ -150,15 +157,11 @@ class BundleProvider:
             ],
         }
 
-    def _is_protein(self, accession: str, kind: str | weaver.IdentifierType | None = None) -> bool:
-        """Whether to read an accession as a protein: as weaver names its kind, else as `get_identifier_type` does."""
-        name = _kind_name(kind) if kind is not None else ''
-        if 'protein' in name or 'transcript' in name:
-            return 'protein' in name
+    def _is_protein(self, accession: str) -> bool:
         return self.get_identifier_type(accession) == weaver.IdentifierType.ProteinAccession
 
-    def _residues(self, accession: str, kind: str | weaver.IdentifierType) -> bytes:
-        if self._is_protein(accession, kind):
+    def _residues(self, accession: str) -> bytes:
+        if self._is_protein(accession):
             for bundle in reversed(self._store.by_protein(accession)):
                 for protein in bundle.proteins:
                     if f'{protein.accession}.{protein.version}' == accession:
@@ -173,7 +176,7 @@ class BundleProvider:
             return self._genome.fetch(ac, start, end)
         if 'genomic' in _kind_name(kind):
             raise weaver.DataProviderError(f'{ac}: not a sequence of this genome')
-        residues = self._residues(ac, kind)
+        residues = self._residues(ac)
         start = max(start, 0)
         return residues[start:].decode('ascii') if end is None or end < 0 else residues[start:end].decode('ascii')
 

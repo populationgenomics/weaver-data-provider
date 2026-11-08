@@ -264,9 +264,9 @@ GENBANK_RECORD = 'ATGAAACTGGTGTAAGG'  # a synthetic mRNA: CDS ATG AAA CTG GTG TA
 GENBANK_PROTEIN = 'MKLV'  # NP_000001.1's residues, so the two share a digest
 
 
-def _genbank_bundle(gene: bundle_pb2.Gene) -> bundle_pb2.GeneBundle:
+def _genbank_bundle(gene: bundle_pb2.Gene, *, record: str = GENBANK_RECORD) -> bundle_pb2.GeneBundle:
     """The gene's U00001.1, unplaced, encoding AAA00001.1."""
-    record, protein = GENBANK_RECORD.encode(), GENBANK_PROTEIN.encode()
+    residues, protein = record.encode(), GENBANK_PROTEIN.encode()
     return bundle_pb2.GeneBundle(
         gene=gene,
         transcripts=[
@@ -276,7 +276,7 @@ def _genbank_bundle(gene: bundle_pb2.Gene) -> bundle_pb2.GeneBundle:
                 publisher=bundle_pb2.PUBLISHER_GENBANK,
                 status=bundle_pb2.TRANSCRIPT_STATUS_CURRENT,
                 biotype='mRNA',
-                sequence_digest=refget.digest(record),
+                sequence_digest=refget.digest(residues),
                 cds=bundle_pb2.Cds(start_index=0, end_index_inclusive=14),
                 protein_accession='AAA00001',
                 protein_version=1,
@@ -292,19 +292,26 @@ def _genbank_bundle(gene: bundle_pb2.Gene) -> bundle_pb2.GeneBundle:
             )
         ],
         sequences=[
-            bundle_pb2.Sequence(digest=refget.digest(record), alphabet=bundle_pb2.ALPHABET_NUCLEOTIDE, residues=record),
+            bundle_pb2.Sequence(
+                digest=refget.digest(residues), alphabet=bundle_pb2.ALPHABET_NUCLEOTIDE, residues=residues
+            ),
             bundle_pb2.Sequence(digest=refget.digest(protein), alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=protein),
         ],
     )
 
 
-def _genbank_store(tmp_path: pathlib.Path, *, genbank_first: bool) -> store_mod.BundleStore:
+def _genbank_store(
+    tmp_path: pathlib.Path, *, genbank_first: bool, record: str = GENBANK_RECORD
+) -> store_mod.BundleStore:
     made, _, _, _ = testing.bundles()
     source = tmp_path / 'records.gb'
     source.write_text('synthetic\n', 'utf-8')
     refseq = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
     genbank = store_build.write_shard(
-        [_genbank_bundle(made[0].gene)], tmp_path / 'shards', release='GB_1', inputs=[('records', source)]
+        [_genbank_bundle(made[0].gene, record=record)],
+        tmp_path / 'shards',
+        release='GB_1',
+        inputs=[('records', source)],
     )
     shards = [genbank, refseq] if genbank_first else [refseq, genbank]
     store_build.write_index(tmp_path / 'with-genbank', shards, assembly=testing.ASSEMBLY)
@@ -542,3 +549,26 @@ def test_a_provider_made_to_include_retired_versions_lists_their_proteins_for_a_
         (weaver.IdentifierType.ProteinAccession, 'NP_000001.1'),
         (weaver.IdentifierType.ProteinAccession, 'NP_000001.2'),
     ]
+
+
+def test_a_digest_a_genbank_mrna_shares_with_a_refseq_transcript_names_the_refseq_accession(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    store = _genbank_store(tmp_path, genbank_first=True, record=built.fwd)  # U00001.1 with NM_000001.1's bases
+    provider = provider_mod.BundleProvider(store, built.genome)
+    assert provider.get_accession_for_refget(refget.digest(built.fwd.encode())) == 'NM_000001.1'
+
+
+def test_a_provider_made_to_list_only_ensembl_lists_no_refseq_transcript_over_a_region(
+    built: testing.Reference,
+) -> None:
+    provider = provider_mod.BundleProvider(built.store, built.genome, listed_publishers={bundle_pb2.PUBLISHER_ENSEMBL})
+    assert provider.get_transcripts_for_region(testing.CHROM, 0, 3000) == []
+
+
+@pytest.mark.parametrize('publishers', [set(), {bundle_pb2.PUBLISHER_UNSPECIFIED}])
+def test_a_provider_listing_no_defined_publisher_is_refused(
+    built: testing.Reference, publishers: set[bundle_pb2.Publisher]
+) -> None:
+    with pytest.raises(ValueError, match='listed_publishers'):
+        provider_mod.BundleProvider(built.store, built.genome, listed_publishers=publishers)
