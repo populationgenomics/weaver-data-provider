@@ -258,3 +258,317 @@ def test_weaver_back_translates_a_protein_variant_without_being_given_a_transcri
     mapper = weaver.VariantMapper(provider)
     coding, _ = mapper.p_to_c(weaver.parse('NP_000001.1:p.Lys2Arg'))
     assert coding.ac == 'NM_000001.1'
+
+
+GENBANK_RECORD = 'ATGAAACTGGTGTAAGG'  # a synthetic mRNA: CDS ATG AAA CTG GTG TAA at indices 0..14, two bases beyond
+GENBANK_PROTEIN = 'MKLV'  # NP_000001.1's residues, so the two share a digest
+
+
+def _genbank_bundle(gene: bundle_pb2.Gene, *, record: str = GENBANK_RECORD) -> bundle_pb2.GeneBundle:
+    """The gene's U00001.1, unplaced, encoding AAA00001.1."""
+    residues, protein = record.encode(), GENBANK_PROTEIN.encode()
+    return bundle_pb2.GeneBundle(
+        gene=gene,
+        transcripts=[
+            bundle_pb2.Transcript(
+                accession='U00001',
+                version=1,
+                publisher=bundle_pb2.PUBLISHER_GENBANK,
+                status=bundle_pb2.TRANSCRIPT_STATUS_CURRENT,
+                biotype='mRNA',
+                sequence_digest=refget.digest(residues),
+                cds=bundle_pb2.Cds(start_index=0, end_index_inclusive=14),
+                protein_accession='AAA00001',
+                protein_version=1,
+            )
+        ],
+        proteins=[
+            bundle_pb2.Protein(
+                accession='AAA00001',
+                version=1,
+                sequence_digest=refget.digest(protein),
+                transcript_accession='U00001',
+                transcript_version=1,
+            )
+        ],
+        sequences=[
+            bundle_pb2.Sequence(
+                digest=refget.digest(residues), alphabet=bundle_pb2.ALPHABET_NUCLEOTIDE, residues=residues
+            ),
+            bundle_pb2.Sequence(digest=refget.digest(protein), alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=protein),
+        ],
+    )
+
+
+def _genbank_store(
+    tmp_path: pathlib.Path, *, genbank_first: bool, record: str = GENBANK_RECORD
+) -> store_mod.BundleStore:
+    made, _, _, _ = testing.bundles()
+    source = tmp_path / 'records.gb'
+    source.write_text('synthetic\n', 'utf-8')
+    refseq = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    genbank = store_build.write_shard(
+        [_genbank_bundle(made[0].gene, record=record)],
+        tmp_path / 'shards',
+        release='GB_1',
+        inputs=[('records', source)],
+    )
+    shards = [genbank, refseq] if genbank_first else [refseq, genbank]
+    store_build.write_index(tmp_path / 'with-genbank', shards, assembly=testing.ASSEMBLY)
+    return store_mod.BundleStore(str(tmp_path / 'with-genbank'))
+
+
+@pytest.fixture
+def genbank_store(tmp_path: pathlib.Path) -> store_mod.BundleStore:
+    """The synthetic store with a GenBank shard stacked on it: FWD's U00001.1, unplaced, encoding AAA00001.1."""
+    return _genbank_store(tmp_path, genbank_first=False)
+
+
+@pytest.fixture
+def with_genbank(built: testing.Reference, genbank_store: store_mod.BundleStore) -> provider_mod.BundleProvider:
+    return provider_mod.BundleProvider(genbank_store, built.genome)
+
+
+@pytest.mark.parametrize(
+    ('identifier', 'kind'),
+    [
+        ('U00001.1', weaver.IdentifierType.TranscriptAccession),
+        ('U00001', weaver.IdentifierType.TranscriptAccession),
+        ('AAA00001.1', weaver.IdentifierType.ProteinAccession),
+    ],
+)
+def test_an_accession_the_store_holds_is_the_kind_it_is_held_as(
+    with_genbank: provider_mod.BundleProvider, identifier: str, kind: weaver.IdentifierType
+) -> None:
+    assert with_genbank.get_identifier_type(identifier) == kind
+
+
+@pytest.mark.parametrize(
+    ('identifier', 'kind'),
+    [
+        ('NM_999999.9', weaver.IdentifierType.TranscriptAccession),
+        ('NP_999999.9', weaver.IdentifierType.ProteinAccession),
+        ('U99999.1', weaver.IdentifierType.Unknown),
+    ],
+)
+def test_an_accession_the_store_does_not_hold_is_the_kind_its_namespace_says(
+    with_genbank: provider_mod.BundleProvider, identifier: str, kind: weaver.IdentifierType
+) -> None:
+    assert with_genbank.get_identifier_type(identifier) == kind
+
+
+def test_a_protein_with_no_reference_prefix_serves_its_residues(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_seq('AAA00001.1', 0, None, weaver.IdentifierType.ProteinAccession) == GENBANK_PROTEIN
+
+
+def test_a_protein_with_no_reference_prefix_has_its_digest(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_refget_accession('AAA00001.1') == refget.digest(GENBANK_PROTEIN.encode())
+
+
+@pytest.mark.parametrize('protein', ['NP_999999', 'NP_999999.1'])
+def test_a_protein_the_store_does_not_hold_is_not_in_the_reference_data(
+    provider: provider_mod.BundleProvider, protein: str
+) -> None:
+    with pytest.raises(weaver.DataProviderError, match='not in the reference data'):
+        provider.get_seq(protein, 0, None, weaver.IdentifierType.ProteinAccession)
+
+
+def test_an_unplaced_transcript_is_given_without_a_placement_whatever_genome_is_asked_for(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    model = with_genbank.get_transcript('U00001.1', testing.CHROM)
+    assert {'strand', 'reference_accession', 'exons'}.isdisjoint(model)
+    assert (model['cds_start_index'], model['cds_end_index']) == (0, 14)
+
+
+def test_a_placed_transcript_asked_for_on_another_sequence_is_refused(provider: provider_mod.BundleProvider) -> None:
+    with pytest.raises(weaver.DataProviderError, match=r'NM_000001\.1: no alignment on NC_000098\.1'):
+        provider.get_transcript('NM_000001.1', 'NC_000098.1')
+
+
+def test_weaver_checks_a_name_on_an_unplaced_record_against_its_own_bases(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    # c.4 is the record's index 3, the first base of codon AAA
+    assert weaver.parse('U00001.1:c.4A>G').validate(with_genbank)
+    assert not weaver.parse('U00001.1:c.4C>G').validate(with_genbank)
+
+
+def test_weaver_predicts_an_unplaced_records_protein_from_its_own_cds(
+    with_genbank: provider_mod.BundleProvider,
+) -> None:
+    mapper = weaver.VariantMapper(with_genbank)
+    # AAA (Lys2) to GAA (Glu)
+    assert mapper.c_to_p(weaver.parse('U00001.1:c.4A>G')).format() == 'AAA00001.1:p.(Lys2Glu)'
+
+
+def test_weaver_refuses_to_place_an_unplaced_record(with_genbank: provider_mod.BundleProvider) -> None:
+    mapper = weaver.VariantMapper(with_genbank)
+    with pytest.raises(weaver.UnsupportedOperationError, match=r'U00001\.1'):
+        mapper.c_to_g(weaver.parse('U00001.1:c.4A>G'), testing.CHROM)
+
+
+def test_a_refseq_transcript_bundled_without_an_alignment_is_given_unplaced(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    del made[1].transcripts[0].alignments[:]  # REV's NM_000002.1, as NCBI published no alignment for it
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'unaligned', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'unaligned')), built.genome)
+    assert 'exons' not in provider.get_transcript('NM_000002.1', testing.CHROM)
+
+
+def test_a_genes_transcripts_leave_out_a_genbank_record(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1')
+    ]
+
+
+def test_a_genes_proteins_leave_out_a_genbank_records_protein(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1')
+    ]
+
+
+def test_a_provider_made_to_list_genbank_lists_its_transcripts_for_a_gene(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    publishers = {bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_GENBANK}
+    provider = provider_mod.BundleProvider(genbank_store, built.genome, listed_publishers=publishers)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1'),
+        (weaver.IdentifierType.TranscriptAccession, 'U00001.1'),
+    ]
+
+
+def test_a_provider_made_to_list_genbank_lists_its_proteins_for_a_gene(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    publishers = {bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_GENBANK}
+    provider = provider_mod.BundleProvider(genbank_store, built.genome, listed_publishers=publishers)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1'),
+        (weaver.IdentifierType.ProteinAccession, 'AAA00001.1'),
+    ]
+
+
+def test_a_provider_made_to_list_only_ensembl_leaves_out_refseq(
+    built: testing.Reference, genbank_store: store_mod.BundleStore
+) -> None:
+    provider = provider_mod.BundleProvider(
+        genbank_store, built.genome, listed_publishers={bundle_pb2.PUBLISHER_ENSEMBL}
+    )
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == []
+
+
+def _with_retired(
+    built: testing.Reference, tmp_path: pathlib.Path, *, include_retired: bool
+) -> provider_mod.BundleProvider:
+    """FWD's bundle holds NM_000001.2 encoding NP_000001.2, and NM_000001.1, superseded, encoding NP_000001.1."""
+    made, _, _, _ = testing.bundles()
+    fwd = made[0]
+    retired = fwd.transcripts[0]
+    retired.status = bundle_pb2.TRANSCRIPT_STATUS_SUPERSEDED
+    del retired.tags[:]
+    current = fwd.transcripts.add()
+    current.CopyFrom(retired)
+    current.version = 2
+    current.status = bundle_pb2.TRANSCRIPT_STATUS_CURRENT
+    current.protein_version = 2
+    protein = fwd.proteins.add()
+    protein.CopyFrom(fwd.proteins[0])
+    protein.version = 2
+    protein.transcript_version = 2
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'retired', [shard], assembly=testing.ASSEMBLY)
+    store = store_mod.BundleStore(str(tmp_path / 'retired'))
+    return provider_mod.BundleProvider(store, built.genome, include_retired=include_retired)
+
+
+def test_a_genes_transcripts_leave_out_a_retired_version(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.2')
+    ]
+
+
+def test_a_genes_proteins_leave_out_a_retired_versions_protein(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.2')
+    ]
+
+
+def test_a_retired_version_is_still_served_when_named(built: testing.Reference, tmp_path: pathlib.Path) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=False)
+    assert provider.get_transcript('NM_000001.1', None)['ac'] == 'NM_000001.1'
+
+
+def test_a_provider_made_to_include_retired_versions_lists_them_for_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'c') == [
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.1'),
+        (weaver.IdentifierType.TranscriptAccession, 'NM_000001.2'),
+    ]
+
+
+def test_a_provider_made_to_include_retired_versions_lists_them_over_a_region(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_transcripts_for_region(testing.CHROM, 150, 150) == ['NM_000001.1', 'NM_000001.2']
+
+
+@pytest.mark.parametrize('genbank_first', [False, True])
+def test_a_digest_two_publishers_share_names_the_reference_publishers_accession(
+    built: testing.Reference, tmp_path: pathlib.Path, genbank_first: bool
+) -> None:
+    store = _genbank_store(tmp_path, genbank_first=genbank_first)
+    provider = provider_mod.BundleProvider(store, built.genome)
+    assert provider.get_accession_for_refget(refget.digest(GENBANK_PROTEIN.encode())) == 'NP_000001.1'
+
+
+def test_a_digest_only_genbank_holds_names_the_genbank_accession(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_accession_for_refget(refget.digest(GENBANK_RECORD.encode())) == 'U00001.1'
+
+
+def test_a_provider_made_to_include_retired_versions_lists_their_proteins_for_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    provider = _with_retired(built, tmp_path, include_retired=True)
+    assert provider.get_symbol_accessions('FWD', 'gene', 'p') == [
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.1'),
+        (weaver.IdentifierType.ProteinAccession, 'NP_000001.2'),
+    ]
+
+
+def test_a_digest_a_genbank_mrna_shares_with_a_refseq_transcript_names_the_refseq_accession(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    store = _genbank_store(tmp_path, genbank_first=True, record=built.fwd)  # U00001.1 with NM_000001.1's bases
+    provider = provider_mod.BundleProvider(store, built.genome)
+    assert provider.get_accession_for_refget(refget.digest(built.fwd.encode())) == 'NM_000001.1'
+
+
+def test_a_provider_made_to_list_only_ensembl_lists_no_refseq_transcript_over_a_region(
+    built: testing.Reference,
+) -> None:
+    provider = provider_mod.BundleProvider(built.store, built.genome, listed_publishers={bundle_pb2.PUBLISHER_ENSEMBL})
+    assert provider.get_transcripts_for_region(testing.CHROM, 0, 3000) == []
+
+
+@pytest.mark.parametrize('publishers', [set(), {bundle_pb2.PUBLISHER_UNSPECIFIED}])
+def test_a_provider_listing_no_defined_publisher_is_refused(
+    built: testing.Reference, publishers: set[bundle_pb2.Publisher]
+) -> None:
+    with pytest.raises(ValueError, match='listed_publishers'):
+        provider_mod.BundleProvider(built.store, built.genome, listed_publishers=publishers)

@@ -685,7 +685,7 @@ requires-dist = [
     { name = "bagz", specifier = ">=0.3.8" },
     { name = "bagz", extras = ["gcs"], marker = "extra == 'gcs'", specifier = ">=0.3.8" },
     { name = "google-crc32c", specifier = ">=1.5" },
-    { name = "hgvs-weaver", specifier = ">=0.7" },
+    { name = "hgvs-weaver", specifier = ">=2" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
     { name = "protovalidate", marker = "extra == 'build'", specifier = ">=1.2" },
     { name = "pysam", marker = "extra == 'build'", specifier = ">=0.23" },

@@ -154,8 +154,7 @@ Which records a shard holds is decided by the files the build is given, and the 
 - **UniProt:** one release's reviewed human entries with their isoforms, and, if the caller also gives it, the release's
   unreviewed entries, which add about 127 thousand entries to the 20 thousand reviewed.
 
-Each shard also records its publisher, so the provider can tell a record's publisher from the shard it came from, and a
-deployment that wants only some publishers can index only their shards. An index is about a tenth to a fifth of the size
+A deployment that wants only some publishers indexes only their shards. An index is about a tenth to a fifth of the size
 of the shards it covers, and shards are shared files that several indexes can name, so a store limited to RefSeq and
 Ensembl beside one holding everything costs one more index and no copied shards.
 
@@ -215,11 +214,13 @@ more widens the filter when it constructs the provider: which publishers a gene'
 versions are among them. A record put in by default could not be taken out. The protocol weaver reads is unchanged
 either way.
 
-Widening has consequences the caller takes on. A UniProt canonical is the MANE Select protein for about 91% of genes, so
-it mostly adds a second reading of residues already listed; its displayed isoform ID is a second key for the same
-record, and is not listed. A GenBank transcript changes weaver's errors: for a name that needs the genome, such as
-`c.4096+1G>A`, a record with no placement that might have been consistent turns an empty answer into weaver's
-`UnsupportedOperationError`, which names the missing placement.
+Widening has consequences the caller takes on. A gene's proteins are those its listed transcripts encode, so a UniProt
+protein, which no transcript encodes, is listed only once UniProt proteins carry their publisher, which comes with their
+shard. A UniProt canonical is the MANE Select protein for about 91% of genes, so listing it mostly adds a second reading
+of residues already listed; its displayed isoform ID is a second key for the same record, and is not listed. A GenBank
+transcript changes weaver's errors: for a name that needs the genome, such as `c.4096+1G>A`, a record with no placement
+that might have been consistent turns an empty answer into weaver's `UnsupportedOperationError`, which names the missing
+placement.
 
 The gene each record belongs to is recorded either way, so a caller holding `U14680.1` can ask whose it is.
 
@@ -269,7 +270,9 @@ shard was cut from, and has no MANE or Select tag.
 The provider decides whether an accession is a genomic sequence, a transcript or a protein from a fixed list of
 prefixes. That list cannot name GenBank or UniProt accessions, which follow no prefix scheme a reader could rely on. The
 provider instead asks its key tables: an accession held as a transcript is a transcript, one held as a protein is a
-protein, a sequence of the genome is genomic.
+protein, a sequence of the genome is genomic. An accession the store does not hold is still the kind its reference
+namespace says, `NM_` a transcript and `NP_` a protein, so a name citing a version no release held is answered "not in
+the reference data" rather than refused as an unknown name.
 
 ### A store holding these shards is format version 2
 
@@ -277,8 +280,9 @@ A reader of the current format decides an accession's kind by its prefix. From a
 answer that the record is not in the reference data, which is an answer, and false. It would also list GenBank and
 UniProt records in every gene's answer, since it has no filter for them. So a store with GenBank or UniProt shards is
 stamped format version 2, which the readers deployed so far refuse at open, and a store with only RefSeq and Ensembl
-shards stays at version 1, which they still read. Each shard records when it is cut whether it needs version 2, beside
-its publisher, so the index builder takes the stamp from its shards rather than from a list of publishers. The range of
+shards stays at version 1, which they still read. The index builder takes the stamp from the records it indexes, not
+from a list of publishers or a flag a shard could set wrongly: a store is version 2 if it holds any transcript or
+protein whose accession is outside the namespaces a version-1 reader recognises, and version 1 otherwise. The range of
 versions a reader opens, and how it narrows, is the store's policy
 ([`store.md`](store.md#a-store-is-files-and-it-opens-once)).
 
@@ -300,6 +304,9 @@ versions a reader opens, and how it narrows, is the store's policy
 - **Equivalence on these records is refused**, even between two spellings on one record, because weaver compares on the
   genome. Comparing on the record alone is weaver's to add
   ([hgvs-weaver#103](https://github.com/populationgenomics/hgvs-weaver/issues/103)).
+- **A RefSeq transcript with no placement is served the same way.** The RefSeq builder bundles a non-coding transcript
+  NCBI published no alignment for, rather than refuse the release. It was refused when named; it is now read on its own
+  sequence, as a GenBank record is.
 - **A store's key and interval tables are unchanged in shape.** The new records add keys, and no intervals.
 - **A gene's answer stops listing retired versions.** The provider's gene lookups today list every version the
   historical shard holds, although its region lookup lists current ones only. The shared filter makes them agree, which

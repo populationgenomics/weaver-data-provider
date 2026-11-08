@@ -50,13 +50,13 @@ def symbol_key(symbol: str) -> str:
 
 
 def read_manifest(root: str) -> store_pb2.StoreManifest:
-    """A store's manifest, refused if its format version is not the one this package reads."""
+    """A store's manifest, refused if its format version is not one this package reads."""
     manifest = store_pb2.StoreManifest()
     manifest.ParseFromString(_files.read_record(_files.join(root, MANIFEST)))
-    if manifest.format_version != weaver_data_provider.FORMAT_VERSION:
+    if not weaver_data_provider.MIN_FORMAT_VERSION <= manifest.format_version <= weaver_data_provider.FORMAT_VERSION:
         raise StoreError(
-            f'{root}: format version {manifest.format_version}; '
-            f'this package reads version {weaver_data_provider.FORMAT_VERSION}'
+            f'{root}: format version {manifest.format_version}; this package reads versions '
+            f'{weaver_data_provider.MIN_FORMAT_VERSION} to {weaver_data_provider.FORMAT_VERSION}'
         )
     return manifest
 
@@ -207,6 +207,14 @@ class BundleStore:
     def by_protein(self, accession: str) -> list[bundle_pb2.GeneBundle]:
         """Bundles holding a protein with this accession, versioned or not."""
         return self.bundles(self._versioned_or_all(PROTEIN, accession))
+
+    def holds_transcript(self, accession: str) -> bool:
+        """Whether a transcript with this accession, versioned or not, is in the store; no bundle is read."""
+        return bool(self._versioned_or_all(ACCESSION, accession))
+
+    def holds_protein(self, accession: str) -> bool:
+        """Whether a protein with this accession, versioned or not, is in the store; no bundle is read."""
+        return bool(self._versioned_or_all(PROTEIN, accession))
 
     def by_digest(self, digest: str) -> list[bundle_pb2.GeneBundle]:
         """Bundles holding a sequence with this refget `SQ.` digest."""

@@ -9,6 +9,7 @@ import sys
 import bagz
 import pytest
 
+import weaver_data_provider
 from weaver_data_provider import _files, build, keytable, refget, store
 from weaver_data_provider.build import store as store_build
 from weaver_data_provider.v1 import bundle_pb2, index_pb2, store_pb2
@@ -359,14 +360,60 @@ def test_a_store_without_its_manifest_is_not_a_store(tmp_path: pathlib.Path) -> 
         store.BundleStore(str(root))
 
 
-def test_an_unknown_format_version_is_refused(tmp_path: pathlib.Path) -> None:
+def test_a_format_version_newer_than_the_reader_is_refused(tmp_path: pathlib.Path) -> None:
     root = _write(tmp_path, [('RS_1', _BUNDLES)])
     manifest = store.read_manifest(str(root))
-    manifest.format_version += 1
+    manifest.format_version = weaver_data_provider.FORMAT_VERSION + 1
     (root / store.MANIFEST).unlink()
     _files.write_record(root / store.MANIFEST, manifest.SerializeToString())
     with pytest.raises(store.StoreError, match='format version'):
         store.BundleStore(str(root))
+
+
+def test_a_format_version_older_than_the_reader_is_refused(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES)])
+    manifest = store.read_manifest(str(root))
+    manifest.format_version = weaver_data_provider.MIN_FORMAT_VERSION - 1
+    (root / store.MANIFEST).unlink()
+    _files.write_record(root / store.MANIFEST, manifest.SerializeToString())
+    with pytest.raises(store.StoreError, match='format version'):
+        store.BundleStore(str(root))
+
+
+def test_a_store_of_reference_records_is_format_version_1(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES)])
+    assert store.read_manifest(str(root)).format_version == 1
+
+
+def _genbank_bundle() -> bundle_pb2.GeneBundle:
+    """BRCA2's U43746.2: a transcript in no reference namespace, placed on no genome."""
+    bundle = _bundle('BRCA2', 'U43746', chromosome='NC_000013.11', start=1000, residues=b'ACGTACGTAC')
+    transcript = bundle.transcripts[0]
+    transcript.publisher = bundle_pb2.PUBLISHER_GENBANK
+    del transcript.alignments[:]
+    return bundle
+
+
+def test_a_store_holding_a_transcript_outside_the_reference_namespaces_is_format_version_2(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES), ('GB_1', [_genbank_bundle()])])
+    assert store.read_manifest(str(root)).format_version == 2
+
+
+def test_a_store_holding_a_protein_outside_the_reference_namespaces_is_format_version_2(
+    tmp_path: pathlib.Path,
+) -> None:
+    bundle = _bundle('BRCA2', 'NM_000059', chromosome='NC_000013.11', start=1000, residues=b'ACGTACGTAC')
+    bundle.transcripts[0].protein_accession = 'AAB00001'
+    bundle.proteins[0].accession = 'AAB00001'
+    root = _write(tmp_path, [('RS_1', [bundle])])
+    assert store.read_manifest(str(root)).format_version == 2
+
+
+def test_a_format_version_2_store_opens(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES), ('GB_1', [_genbank_bundle()])])
+    assert store.BundleStore(str(root)).holds_transcript('U43746.2')
 
 
 def test_a_shard_rewritten_under_the_index_is_refused(tmp_path: pathlib.Path) -> None:

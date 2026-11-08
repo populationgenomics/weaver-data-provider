@@ -72,7 +72,7 @@ def build_genome(
         raise build.BuildError(f'{source}: a tar archive; extract the FASTA first')
     out.mkdir(parents=True, exist_ok=True)
     catalogue = genome_pb2.SequenceCatalogue(
-        format_version=weaver_data_provider.FORMAT_VERSION,
+        format_version=weaver_data_provider.MIN_FORMAT_VERSION,  # every version reads a genome alike
         assembly=assembly,
         source=store_pb2.Input(role='genome', digest=_files.md5_of_local(source), digest_algorithm='md5'),
         builder=build.BUILDER,

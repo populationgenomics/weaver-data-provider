@@ -6,5 +6,6 @@ import importlib.metadata
 
 __version__ = importlib.metadata.version('hgvs-weaver-data')
 
-# The at-rest format this version writes and reads. A reader refuses any other, rather than misreading it.
-FORMAT_VERSION = 1
+# The at-rest formats this version reads, oldest to newest; see docs/design/store.md.
+MIN_FORMAT_VERSION = 1
+FORMAT_VERSION = 2
