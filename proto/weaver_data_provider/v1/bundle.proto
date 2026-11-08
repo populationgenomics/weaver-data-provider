@@ -16,6 +16,8 @@ enum Publisher {
   PUBLISHER_UNSPECIFIED = 0;
   PUBLISHER_REFSEQ = 1;
   PUBLISHER_ENSEMBL = 2;
+  // An INSDC record: a sequence as submitted, with the CDS it states and no placement on any genome.
+  PUBLISHER_GENBANK = 3;
 }
 
 enum TranscriptStatus {

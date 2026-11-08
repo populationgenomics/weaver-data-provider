@@ -13,6 +13,7 @@ class Publisher(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PUBLISHER_UNSPECIFIED: _ClassVar[Publisher]
     PUBLISHER_REFSEQ: _ClassVar[Publisher]
     PUBLISHER_ENSEMBL: _ClassVar[Publisher]
+    PUBLISHER_GENBANK: _ClassVar[Publisher]
 
 class TranscriptStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -57,6 +58,7 @@ class Alphabet(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
 PUBLISHER_UNSPECIFIED: Publisher
 PUBLISHER_REFSEQ: Publisher
 PUBLISHER_ENSEMBL: Publisher
+PUBLISHER_GENBANK: Publisher
 TRANSCRIPT_STATUS_UNSPECIFIED: TranscriptStatus
 TRANSCRIPT_STATUS_CURRENT: TranscriptStatus
 TRANSCRIPT_STATUS_SUPERSEDED: TranscriptStatus

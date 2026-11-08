@@ -15,6 +15,8 @@ from weaver_data_provider import genome as genome_mod
 from weaver_data_provider import store as store_mod
 from weaver_data_provider.v1 import bundle_pb2
 
+# The reference publishers' namespaces, for an accession the store does not hold: it is still that kind, and
+# weaver's error says it is not in the reference data rather than that the name is unknown.
 _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
@@ -101,7 +103,7 @@ class BundleProvider:
         }
 
     def _residues(self, accession: str) -> bytes:
-        if accession.startswith(_PROTEIN):
+        if self._store.holds_protein(accession):
             for bundle in reversed(self._store.by_protein(accession)):
                 for protein in bundle.proteins:
                     if f'{protein.accession}.{protein.version}' == accession:
@@ -159,11 +161,12 @@ class BundleProvider:
         return []
 
     def get_identifier_type(self, identifier: str) -> weaver.IdentifierType:
-        if identifier.startswith(_GENOMIC) or identifier in self._genome:
+        """What the store holds the identifier as; for one it does not hold, what its namespace says."""
+        if identifier in self._genome or identifier.startswith(_GENOMIC):
             return weaver.IdentifierType.GenomicAccession
-        if identifier.startswith(_TRANSCRIPT):
+        if self._store.holds_transcript(identifier) or identifier.startswith(_TRANSCRIPT):
             return weaver.IdentifierType.TranscriptAccession
-        if identifier.startswith(_PROTEIN):
+        if self._store.holds_protein(identifier) or identifier.startswith(_PROTEIN):
             return weaver.IdentifierType.ProteinAccession
         if self._store.by_symbol(identifier):
             return weaver.IdentifierType.GeneSymbol
@@ -195,7 +198,7 @@ class BundleProvider:
         if ac in self._genome:
             return self._genome.digest(ac)
         try:
-            if ac.startswith(_PROTEIN):
+            if self._store.holds_protein(ac):
                 for bundle in self._store.by_protein(ac):
                     for protein in bundle.proteins:
                         if f'{protein.accession}.{protein.version}' == ac:

@@ -258,3 +258,87 @@ def test_weaver_back_translates_a_protein_variant_without_being_given_a_transcri
     mapper = weaver.VariantMapper(provider)
     coding, _ = mapper.p_to_c(weaver.parse('NP_000001.1:p.Lys2Arg'))
     assert coding.ac == 'NM_000001.1'
+
+
+GENBANK_RECORD = 'ATGAAACTGGTGTAAGG'  # a synthetic mRNA: CDS ATG AAA CTG GTG TAA at indices 0..14, two bases beyond
+GENBANK_PROTEIN = 'MKLV'  # NP_000001.1's residues, so the two share a digest
+
+
+@pytest.fixture
+def with_genbank(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """The synthetic store with a GenBank shard stacked on it: FWD's U00001.1, unplaced, encoding AAA00001.1."""
+    made, _, _, _ = testing.bundles()
+    record, protein = GENBANK_RECORD.encode(), GENBANK_PROTEIN.encode()
+    genbank = bundle_pb2.GeneBundle(
+        gene=made[0].gene,
+        transcripts=[
+            bundle_pb2.Transcript(
+                accession='U00001',
+                version=1,
+                publisher=bundle_pb2.PUBLISHER_GENBANK,
+                status=bundle_pb2.TRANSCRIPT_STATUS_CURRENT,
+                biotype='mRNA',
+                sequence_digest=refget.digest(record),
+                cds=bundle_pb2.Cds(start_index=0, end_index_inclusive=14),
+                protein_accession='AAA00001',
+                protein_version=1,
+            )
+        ],
+        proteins=[
+            bundle_pb2.Protein(
+                accession='AAA00001',
+                version=1,
+                sequence_digest=refget.digest(protein),
+                transcript_accession='U00001',
+                transcript_version=1,
+            )
+        ],
+        sequences=[
+            bundle_pb2.Sequence(digest=refget.digest(record), alphabet=bundle_pb2.ALPHABET_NUCLEOTIDE, residues=record),
+            bundle_pb2.Sequence(digest=refget.digest(protein), alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=protein),
+        ],
+    )
+    source = tmp_path / 'records.gb'
+    source.write_text('synthetic\n', 'utf-8')
+    shards = [
+        store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)]),
+        store_build.write_shard([genbank], tmp_path / 'shards', release='GB_1', inputs=[('records', source)]),
+    ]
+    store_build.write_index(tmp_path / 'with-genbank', shards, assembly=testing.ASSEMBLY)
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'with-genbank')), built.genome)
+
+
+@pytest.mark.parametrize(
+    ('identifier', 'kind'),
+    [
+        ('U00001.1', weaver.IdentifierType.TranscriptAccession),
+        ('U00001', weaver.IdentifierType.TranscriptAccession),
+        ('AAA00001.1', weaver.IdentifierType.ProteinAccession),
+    ],
+)
+def test_an_accession_the_store_holds_is_the_kind_it_is_held_as(
+    with_genbank: provider_mod.BundleProvider, identifier: str, kind: weaver.IdentifierType
+) -> None:
+    assert with_genbank.get_identifier_type(identifier) == kind
+
+
+@pytest.mark.parametrize(
+    ('identifier', 'kind'),
+    [
+        ('NM_999999.9', weaver.IdentifierType.TranscriptAccession),
+        ('NP_999999.9', weaver.IdentifierType.ProteinAccession),
+        ('U99999.1', weaver.IdentifierType.Unknown),
+    ],
+)
+def test_an_accession_the_store_does_not_hold_is_the_kind_its_namespace_says(
+    with_genbank: provider_mod.BundleProvider, identifier: str, kind: weaver.IdentifierType
+) -> None:
+    assert with_genbank.get_identifier_type(identifier) == kind
+
+
+def test_a_protein_with_no_reference_prefix_serves_its_residues(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_seq('AAA00001.1', 0, None, weaver.IdentifierType.ProteinAccession) == GENBANK_PROTEIN
+
+
+def test_a_protein_with_no_reference_prefix_has_its_digest(with_genbank: provider_mod.BundleProvider) -> None:
+    assert with_genbank.get_refget_accession('AAA00001.1') == refget.digest(GENBANK_PROTEIN.encode())

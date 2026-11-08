@@ -208,6 +208,14 @@ class BundleStore:
         """Bundles holding a protein with this accession, versioned or not."""
         return self.bundles(self._versioned_or_all(PROTEIN, accession))
 
+    def holds_transcript(self, accession: str) -> bool:
+        """Whether a transcript with this accession, versioned or not, is in the store; no bundle is read."""
+        return bool(self._versioned_or_all(ACCESSION, accession))
+
+    def holds_protein(self, accession: str) -> bool:
+        """Whether a protein with this accession, versioned or not, is in the store; no bundle is read."""
+        return bool(self._versioned_or_all(PROTEIN, accession))
+
     def by_digest(self, digest: str) -> list[bundle_pb2.GeneBundle]:
         """Bundles holding a sequence with this refget `SQ.` digest."""
         return self.bundles(self._tables[DIGEST].lookup(refget.raw(digest)))
