@@ -49,6 +49,11 @@ def symbol_key(symbol: str) -> str:
     return _NOT_SYMBOL.sub('', symbol.upper())
 
 
+def protein_name(protein: bundle_pb2.Protein) -> str:
+    """How a protein is named and keyed: `NP_000050.3`, or its accession alone where it has no version."""
+    return f'{protein.accession}.{protein.version}' if protein.version else protein.accession
+
+
 def read_manifest(root: str) -> store_pb2.StoreManifest:
     """A store's manifest, refused if its format version is not one this package reads."""
     manifest = store_pb2.StoreManifest()
@@ -184,13 +189,20 @@ class BundleStore:
         return [bundle_pb2.GeneBundle.FromString(found[r]) for r in records]
 
     def _versioned_or_all(self, kind: str, accession: str) -> tuple[int, ...]:
-        """Records under an exact `NM_000059.4`, or under every version of a bare `NM_000059`."""
+        """Records under an exact `NM_000059.4`, or under a bare `NM_000059`: every version, or the record itself.
+
+        A record with no version of its own, a UniProt isoform ID, is keyed bare; `P38398-2` is not a prefix of
+        `P38398-20`'s key, since only the dot before a version is searched past.
+        """
         accession = accession.strip()
         if not accession.isascii():
             return ()  # every key is ASCII
+        table = self._tables[kind]
         if '.' in accession:
-            return self._tables[kind].lookup(accession.encode('ascii'))
-        return self._tables[kind].prefixed(f'{accession}.'.encode('ascii'))
+            return table.lookup(accession.encode('ascii'))
+        return tuple(
+            sorted({*table.lookup(accession.encode('ascii')), *table.prefixed(f'{accession}.'.encode('ascii'))})
+        )
 
     def by_symbol(self, symbol: str) -> list[bundle_pb2.GeneBundle]:
         """Bundles whose approved, previous or alias symbol matches, symbol normalised.

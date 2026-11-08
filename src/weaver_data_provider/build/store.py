@@ -194,7 +194,7 @@ def _index_bundle(
             span_end = max(e.genome_end_inclusive for e in alignment.exons)
             intervals[alignment.chromosome].append((span_start, span_end, record))
     for protein in bundle.proteins:
-        tables[store_mod.PROTEIN].add(f'{protein.accession}.{protein.version}'.encode('ascii'), [record])
+        tables[store_mod.PROTEIN].add(store_mod.protein_name(protein).encode('ascii'), [record])
     for sequence in bundle.sequences:
         tables[store_mod.DIGEST].add(refget.raw(sequence.digest), [record])
 
@@ -232,9 +232,10 @@ def write_index(
 
     Each shard is read with the record `write_shard` left beside it. Record numbers run across the
     shards in the order given; the manifest names each by its path relative to `out`. Accessions and
-    proteins are keyed by their versioned form only; the reader answers a bare accession with a prefix
-    search over the versions. The manifest is stamped with the lowest format version that reads every
-    bundle correctly, so a store a version-1 reader serves correctly stays readable by it.
+    proteins are keyed by their versioned form, or bare for a protein with no version of its own; the
+    reader answers a bare accession with that key and a prefix search over the versions. The manifest is
+    stamped with the lowest format version that reads every bundle correctly, so a store a version-1
+    reader serves correctly stays readable by it.
 
     Raises:
         build.BuildError: If a shard's bytes no longer match its digest, or an alignment is on another assembly.

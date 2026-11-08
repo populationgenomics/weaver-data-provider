@@ -572,3 +572,72 @@ def test_a_provider_listing_no_defined_publisher_is_refused(
 ) -> None:
     with pytest.raises(ValueError, match='listed_publishers'):
         provider_mod.BundleProvider(built.store, built.genome, listed_publishers=publishers)
+
+
+def test_a_protein_with_no_version_serves_its_residues_by_its_accession(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    store_build.write_index(
+        tmp_path / 'uniprot', [_isoform_release(tmp_path, 'UP_1', b'MKV')], assembly=testing.ASSEMBLY
+    )
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'uniprot')), built.genome)
+    assert provider.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKV'
+
+
+def _isoform_release(tmp_path: pathlib.Path, release: str, residues: bytes) -> pathlib.Path:
+    """A UniProt-shaped shard holding FWD's isoform P00001-2 with these residues."""
+    digest = refget.digest(residues)
+    bundle = bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol='FWD'),
+        proteins=[bundle_pb2.Protein(accession='P00001-2', version=0, sequence_digest=digest)],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=residues)],
+    )
+    source = tmp_path / f'{release}.dat'
+    source.write_text('synthetic\n', 'utf-8')
+    return store_build.write_shard([bundle], tmp_path / 'shards', release=release, inputs=[('entries', source)])
+
+
+@pytest.fixture
+def reused_isoform(built: testing.Reference, tmp_path: pathlib.Path) -> provider_mod.BundleProvider:
+    """Two UniProt releases stacked, the later giving the isoform ID P00001-2 other residues, MKNEW for MKOLD."""
+    shards = [_isoform_release(tmp_path, 'UP_1', b'MKOLD'), _isoform_release(tmp_path, 'UP_2', b'MKNEW')]
+    store_build.write_index(tmp_path / 'reused', shards, assembly=testing.ASSEMBLY)
+    return provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'reused')), built.genome)
+
+
+def test_a_reused_isoform_id_serves_the_later_releases_residues(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_seq('P00001-2', 0, None, weaver.IdentifierType.ProteinAccession) == 'MKNEW'
+
+
+def test_a_reused_isoform_ids_digest_is_the_later_releases(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_refget_accession('P00001-2') == refget.digest(b'MKNEW')
+
+
+def test_a_digest_a_reused_name_no_longer_carries_names_nothing(reused_isoform: provider_mod.BundleProvider) -> None:
+    assert reused_isoform.get_accession_for_refget(refget.digest(b'MKOLD')) is None
+
+
+def test_a_uniprot_name_the_store_does_not_hold_is_a_protein_not_in_the_reference_data(
+    reused_isoform: provider_mod.BundleProvider,
+) -> None:
+    with pytest.raises(weaver.DataProviderError, match=r'P21181-4: not in the reference data'):
+        reused_isoform.get_seq('P21181-4', 0, None, weaver.IdentifierType.ProteinAccession)
+
+
+def test_a_gene_symbol_in_the_shape_of_a_uniprot_accession_is_a_gene(
+    built: testing.Reference, tmp_path: pathlib.Path
+) -> None:
+    made, _, _, _ = testing.bundles()
+    made[0].gene.symbol = 'H2AC11'  # an HGNC symbol UniProt's accession format also fits
+    source = tmp_path / 'annotation.gff3'
+    source.write_text('synthetic\n', 'utf-8')
+    shard = store_build.write_shard(made, tmp_path / 'shards', release='RS_1', inputs=[('annotation', source)])
+    store_build.write_index(tmp_path / 'h2', [shard], assembly=testing.ASSEMBLY)
+    provider = provider_mod.BundleProvider(store_mod.BundleStore(str(tmp_path / 'h2')), built.genome)
+    assert provider.get_identifier_type('H2AC11') == weaver.IdentifierType.GeneSymbol
+
+
+def test_a_bare_name_in_the_shape_of_a_uniprot_accession_the_store_does_not_hold_is_unknown(
+    provider: provider_mod.BundleProvider,
+) -> None:
+    assert provider.get_identifier_type('H2AZP1') == weaver.IdentifierType.Unknown  # an HGNC pseudogene's symbol

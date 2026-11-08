@@ -9,6 +9,7 @@ genome.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 import weaver
@@ -22,6 +23,9 @@ from weaver_data_provider.v1 import bundle_pb2
 _GENOMIC = ('NC_', 'NT_', 'NW_')
 _TRANSCRIPT = ('NM_', 'NR_', 'XM_', 'XR_', 'ENST')
 _PROTEIN = ('NP_', 'XP_', 'YP_', 'ENSP')
+# UniProt's accession format, as its manual gives it, with an isoform's suffix or a sequence version: a bare
+# accession in that shape is also the shape of gene symbols (H2AZP1) no store need hold.
+_UNIPROT = re.compile(r'^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+|\.\d+)$')
 
 # Whose records a gene's or a region's answer lists unless the caller says otherwise.
 REFERENCE_PUBLISHERS = frozenset({bundle_pb2.PUBLISHER_REFSEQ, bundle_pb2.PUBLISHER_ENSEMBL})
@@ -164,8 +168,12 @@ class BundleProvider:
         if self._is_protein(accession):
             for bundle in reversed(self._store.by_protein(accession)):
                 for protein in bundle.proteins:
-                    if f'{protein.accession}.{protein.version}' == accession:
+                    if store_mod.protein_name(protein) == accession:
                         return _sequence(bundle, protein.sequence_digest)
+            if '.' not in accession and self._store.holds_protein(accession):
+                raise weaver.DataProviderError(
+                    f'{accession}: a protein is held per version; give the versioned accession'
+                )
             raise weaver.DataProviderError(f'{accession}: not in the reference data')
         bundle, transcript = self._transcript(accession)
         return _sequence(bundle, transcript.sequence_digest)
@@ -187,7 +195,7 @@ class BundleProvider:
 
         A gene's proteins are those its listed transcripts encode. `p -> c` answers the transcripts recorded
         as encoding that version of the protein. A protein, like a transcript, is named by version: a bare
-        accession, or a version no release holds, answers empty.
+        accession, a version no release holds, or a protein no transcript encodes, a UniProt one, answers empty.
         """
         if source_kind == 'gene' and target_kind == 'c':
             transcripts = (f'{t.accession}.{t.version}' for _, t in self._gene_transcripts(symbol))
@@ -215,7 +223,7 @@ class BundleProvider:
             return [(weaver.IdentifierType.TranscriptAccession, ac) for ac in dict.fromkeys(transcripts)]
         if source_kind == 'gene' and target_kind == 'p':
             proteins = (
-                f'{p.accession}.{p.version}'
+                store_mod.protein_name(p)
                 for b, t in self._gene_transcripts(symbol)
                 for p in b.proteins
                 if (p.transcript_accession, p.transcript_version) == (t.accession, t.version)
@@ -224,7 +232,10 @@ class BundleProvider:
         return []
 
     def get_identifier_type(self, identifier: str) -> weaver.IdentifierType:
-        """What the store holds the identifier as; for one it does not hold, what its namespace says."""
+        """What the store holds the identifier as; for one it does not hold, what its namespace says.
+
+        UniProt's accession format, with an isoform's suffix or a version, is read last, after the gene symbols.
+        """
         if identifier in self._genome or identifier.startswith(_GENOMIC):
             return weaver.IdentifierType.GenomicAccession
         if self._store.holds_transcript(identifier) or identifier.startswith(_TRANSCRIPT):
@@ -233,6 +244,8 @@ class BundleProvider:
             return weaver.IdentifierType.ProteinAccession
         if self._store.by_symbol(identifier):
             return weaver.IdentifierType.GeneSymbol
+        if _UNIPROT.match(identifier) is not None:
+            return weaver.IdentifierType.ProteinAccession
         return weaver.IdentifierType.Unknown
 
     def get_transcripts_for_region(self, chrom: str, start: int, end: int) -> list[str]:
@@ -259,13 +272,14 @@ class BundleProvider:
     # ---- refget ------------------------------------------------------------------------------------
 
     def get_refget_accession(self, ac: str) -> str | None:
+        """The digest of the sequence the name serves: the newest release's, where several hold the name."""
         if ac in self._genome:
             return self._genome.digest(ac)
         try:
             if self._is_protein(ac):
-                for bundle in self._store.by_protein(ac):
+                for bundle in reversed(self._store.by_protein(ac)):
                     for protein in bundle.proteins:
-                        if f'{protein.accession}.{protein.version}' == ac:
+                        if store_mod.protein_name(protein) == ac:
                             return protein.sequence_digest
                 return None
             _, transcript = self._transcript(ac)
@@ -274,7 +288,10 @@ class BundleProvider:
         return transcript.sequence_digest
 
     def get_accession_for_refget(self, refget: str) -> str | None:
-        """The accession carrying a digest: a chromosome first, then a reference publisher's, then GenBank's.
+        """The accession carrying a digest: a chromosome, then a reference publisher's, then GenBank's, then UniProt's.
+
+        A name with no version that a later release gives other residues, a reused UniProt isoform ID, no longer
+        carries the digest and is not named.
 
         A `ga4gh:` prefix is accepted; a string that is not an `SQ.` digest names nothing, so answers None.
         """
@@ -299,5 +316,10 @@ class BundleProvider:
                 if protein.sequence_digest == refget:
                     publisher = publishers.get((protein.transcript_accession, protein.transcript_version))
                     rank = _DIGEST_PREFERENCE.get(publisher, _UNRANKED) if publisher is not None else _UNRANKED
-                    found.append((rank, f'{protein.accession}.{protein.version}'))
-        return min(found, key=lambda item: item[0])[1] if found else None
+                    found.append((rank, store_mod.protein_name(protein)))
+        # A name with no version, a UniProt isoform ID, may be one a later release gives other residues;
+        # a versioned name names one sequence.
+        for _, name in sorted(dict.fromkeys(found), key=lambda item: item[0]):
+            if '.' in name or self.get_refget_accession(name) == refget:
+                return name
+        return None

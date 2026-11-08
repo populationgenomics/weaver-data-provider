@@ -554,3 +554,30 @@ def test_a_remote_store_without_the_gcs_extra_names_the_extra(monkeypatch: pytes
     monkeypatch.setitem(sys.modules, 'google.cloud.storage', None)  # what an install without the extra looks like
     with pytest.raises(ImportError, match=r'hgvs-weaver-data\[gcs\]'):
         store.BundleStore('gs://bucket/reference/store')
+
+
+def _proteins_only(symbol: str, names: list[tuple[str, int]]) -> bundle_pb2.GeneBundle:
+    """A gene's bundle of proteins with no transcript, as a UniProt shard holds them, each MK."""
+    digest = refget.digest(b'MK')
+    return bundle_pb2.GeneBundle(
+        gene=bundle_pb2.Gene(symbol=symbol),
+        proteins=[bundle_pb2.Protein(accession=a, version=v, sequence_digest=digest) for a, v in names],
+        sequences=[bundle_pb2.Sequence(digest=digest, alphabet=bundle_pb2.ALPHABET_PROTEIN, residues=b'MK')],
+    )
+
+
+def test_a_protein_with_no_version_is_found_by_its_accession(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('UP_1', [_proteins_only('UNI', [('P00001', 2), ('P00001-2', 0)])])])
+    assert [b.gene.symbol for b in store.BundleStore(str(root)).by_protein('P00001-2')] == ['UNI']
+
+
+def test_a_bare_accession_is_not_a_prefix_of_a_longer_one(tmp_path: pathlib.Path) -> None:
+    root = _write(tmp_path, [('UP_1', [_proteins_only('UNI', [('P00001-20', 0)])])])
+    assert not store.BundleStore(str(root)).holds_protein('P00001-2')
+
+
+def test_a_reference_protein_with_no_version_is_refused(tmp_path: pathlib.Path) -> None:
+    bundle = _bundle('BRCA2', 'NM_000059', chromosome='NC_000013.11', start=1000, residues=b'ACGTACGTAC')
+    bundle.proteins[0].version = 0
+    with pytest.raises(build.BuildError, match=r'protein\.version'):
+        store_build.write_shard([bundle], tmp_path / 'shards', release='RS_1', inputs=_inputs(tmp_path))
