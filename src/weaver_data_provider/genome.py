@@ -56,7 +56,7 @@ class Genome:
             root: The genome's directory or `gs://` prefix.
             cache_blocks: Decoded blocks kept, least recently used evicted first.
             storage_client: A `google.cloud.storage.Client`, used on `gs://` only, to read the blocks
-                file's recorded digest. One is made when omitted.
+                file's recorded digest. When omitted, the open makes one and closes it.
 
         Raises:
             GenomeError: If the catalogue's format version is unknown, or the blocks file's digest or
@@ -71,7 +71,9 @@ class Genome:
         path = _files.join(self.root, BLOCKS)
         if catalogue.digest_algorithm != 'crc32c':
             raise GenomeError(f'{path}: cannot check a {catalogue.digest_algorithm} digest')
-        if (found := _files.crc32c_of(path, storage_client)) != catalogue.digest:
+        with _files.crc32c_reader(self.root, storage_client) as crc32c_of:
+            found = crc32c_of(path)
+        if found != catalogue.digest:
             raise GenomeError(f'{path}: crc32c {found}, the catalogue records {catalogue.digest}')
         self._blocks = bagz.Reader(path)
 
