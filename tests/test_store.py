@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import pathlib
 import sys
+import types
+from unittest import mock
 
 import bagz
 import pytest
@@ -513,6 +516,123 @@ def test_crc32c_is_the_castagnoli_checksum(tmp_path: pathlib.Path) -> None:
     path = tmp_path / 'check'
     path.write_bytes(b'123456789')
     assert _files.crc32c_of_local(path) == 'e3069283'
+
+
+# What GCS records as an object's crc32c: its four bytes in base64. These two are e3069283 and 0badcafe.
+_RECORDED_BY_GCS = {'store/keys.bagz': '4waSgw==', 'shards/RS_1.bagz': 'C63K/g=='}
+
+
+@dataclasses.dataclass(frozen=True)
+class _Blob:
+    crc32c: str
+
+
+class _Bucket:
+    @staticmethod
+    def get_blob(name: str) -> _Blob:
+        return _Blob(_RECORDED_BY_GCS[name])
+
+
+class _StorageClient:
+    """Stands in for `google.cloud.storage.Client` in the one read an open makes through it; records its close.
+
+    A store or genome under `gs://` cannot be opened without a bucket, so the tests below drive the reader both
+    opens take their digests from, and one test of each open checks that it asks for that reader once.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    @staticmethod
+    def bucket(_name: str) -> _Bucket:
+        return _Bucket()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _stand_in_storage(monkeypatch: pytest.MonkeyPatch) -> tuple[types.SimpleNamespace, list[_StorageClient]]:
+    """Stand a module in for `google.cloud.storage` whose `Client()` is a `_StorageClient`, and list each one made."""
+    made: list[_StorageClient] = []
+
+    def make() -> _StorageClient:
+        made.append(_StorageClient())
+        return made[-1]
+
+    module = types.SimpleNamespace(Client=make)
+    # Both entries: `from google.cloud import storage` takes the module from the package once the package holds it.
+    monkeypatch.setitem(sys.modules, 'google.cloud', types.SimpleNamespace(storage=module))
+    monkeypatch.setitem(sys.modules, 'google.cloud.storage', module)
+    return module, made
+
+
+def test_an_open_under_a_bucket_makes_one_storage_client_for_all_its_digests(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, made = _stand_in_storage(monkeypatch)
+
+    with _files.crc32c_reader('gs://bucket/store', None) as crc32c_of:
+        assert crc32c_of('gs://bucket/store/keys.bagz') == 'e3069283'
+        assert crc32c_of('gs://bucket/shards/RS_1.bagz') == '0badcafe'
+
+    assert len(made) == 1
+
+
+def test_the_storage_client_an_open_makes_is_closed_once_its_digests_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, made = _stand_in_storage(monkeypatch)
+
+    with _files.crc32c_reader('gs://bucket/store', None):
+        assert [client.closed for client in made] == [False]
+
+    assert [client.closed for client in made] == [True]
+
+
+def test_the_storage_client_an_open_makes_is_closed_when_a_digest_check_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, made = _stand_in_storage(monkeypatch)
+
+    with pytest.raises(store.StoreError), _files.crc32c_reader('gs://bucket/store', None):
+        raise store.StoreError('gs://bucket/store/keys.bagz: crc32c e3069283, the manifest records 00000000')
+
+    assert [client.closed for client in made] == [True]
+
+
+def test_an_open_handed_a_storage_client_reads_through_it_and_makes_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage, made = _stand_in_storage(monkeypatch)
+    handed = storage.Client()
+
+    with _files.crc32c_reader('gs://bucket/store', handed) as crc32c_of:
+        assert crc32c_of('gs://bucket/store/keys.bagz') == 'e3069283'
+
+    assert made == [handed]
+
+
+def test_a_storage_client_handed_to_an_open_is_left_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage, _ = _stand_in_storage(monkeypatch)
+    handed = storage.Client()
+
+    with _files.crc32c_reader('gs://bucket/store', handed):
+        pass
+
+    assert not handed.closed
+
+
+def test_a_store_asks_for_one_digest_reader_with_the_callers_storage_client(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    newer = _bundle('BRCA2', 'NM_000059', chromosome='NC_000013.11', start=1000, residues=b'ACGTACGTAC', version=3)
+    root = _write(tmp_path, [('RS_1', _BUNDLES), ('RS_2', [newer])])
+    reader = mock.Mock(wraps=_files.crc32c_reader)
+    monkeypatch.setattr(_files, 'crc32c_reader', reader)
+
+    store.BundleStore(str(root), storage_client=mock.sentinel.storage_client)
+
+    reader.assert_called_once_with(str(root), mock.sentinel.storage_client)
+
+
+def test_a_local_store_opens_without_the_gcs_extra(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _write(tmp_path, [('RS_1', _BUNDLES)])
+    # What an install without the extra looks like, whatever an earlier test imported.
+    monkeypatch.setitem(sys.modules, 'google.cloud', None)
+    monkeypatch.setitem(sys.modules, 'google.cloud.storage', None)
+    assert len(store.BundleStore(str(root))) == len(_BUNDLES)
 
 
 def test_a_manifest_recording_more_records_than_its_shards_hold_is_refused(tmp_path: pathlib.Path) -> None:

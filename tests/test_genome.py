@@ -7,6 +7,7 @@ import gzip
 import pathlib
 import random
 import sys
+from unittest import mock
 
 import pytest
 
@@ -169,6 +170,20 @@ def test_a_rewritten_blocks_file_is_refused(tmp_path: pathlib.Path) -> None:
     (tmp_path / 'first' / genome_mod.BLOCKS).write_bytes((tmp_path / 'second' / genome_mod.BLOCKS).read_bytes())
     with pytest.raises(genome_mod.GenomeError, match='crc32c'):
         genome_mod.Genome(str(tmp_path / 'first'))
+
+
+def test_a_genome_asks_for_one_digest_reader_with_the_callers_storage_client(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under gs:// that reader holds the storage client; no genome opens from a bucket here, so this watches the ask.
+    (tmp_path / 'g.fa').write_text('>a\nACGT\n', 'ascii')
+    genome_build.build_genome(tmp_path / 'g.fa', tmp_path / 'out', assembly=_ASSEMBLY)
+    reader = mock.Mock(wraps=_files.crc32c_reader)
+    monkeypatch.setattr(_files, 'crc32c_reader', reader)
+
+    genome_mod.Genome(str(tmp_path / 'out'), storage_client=mock.sentinel.storage_client)
+
+    reader.assert_called_once_with(str(tmp_path / 'out'), mock.sentinel.storage_client)
 
 
 def test_a_genome_is_format_version_1(built: testing.Reference) -> None:
