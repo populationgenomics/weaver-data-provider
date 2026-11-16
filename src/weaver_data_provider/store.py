@@ -14,7 +14,7 @@ import collections
 import itertools
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 import bagz
@@ -61,10 +61,10 @@ def read_manifest(root: str) -> store_pb2.StoreManifest:
     return manifest
 
 
-def _check_digest(path: str, digest: str, algorithm: str, storage_client: storage.Client | None) -> None:
+def _check_digest(path: str, digest: str, algorithm: str, crc32c_of: Callable[[str], str]) -> None:
     if algorithm != 'crc32c':
         raise StoreError(f'{path}: cannot check a {algorithm} digest')
-    if (found := _files.crc32c_of(path, storage_client)) != digest:
+    if (found := crc32c_of(path)) != digest:
         raise StoreError(f'{path}: crc32c {found}, the manifest records {digest}')
 
 
@@ -98,8 +98,8 @@ class BundleStore:
         Args:
             root: The store's directory or `gs://` prefix.
             cache_size: Bundles kept decoded, by record number.
-            storage_client: A `google.cloud.storage.Client`, used on `gs://` only, to read each shard's
-                recorded crc32c. One is made when omitted.
+            storage_client: A `google.cloud.storage.Client`, used on `gs://` only, to read each shard's and
+                index file's recorded crc32c. When omitted, the open makes one for all of them and closes it.
 
         Raises:
             StoreError: If the manifest's format version is unknown, or a shard's or index file's
@@ -112,14 +112,15 @@ class BundleStore:
         self.assembly = self.manifest.assembly
 
         paths = [_files.join(self.root, shard.path) for shard in self.manifest.shards]
-        for shard, path in zip(self.manifest.shards, paths, strict=True):
-            _check_digest(path, shard.digest, shard.digest_algorithm, storage_client)
-        index_files = {f.path: f for f in self.manifest.index_files}
-        if missing_files := {KEYS, INTERVALS} - index_files.keys():
-            raise StoreError(f'{self.root}: the manifest records no digest for {sorted(missing_files)}')
-        for name in (KEYS, INTERVALS):
-            entry = index_files[name]
-            _check_digest(_files.join(self.root, name), entry.digest, entry.digest_algorithm, storage_client)
+        with _files.crc32c_reader(self.root, storage_client) as crc32c_of:
+            for shard, path in zip(self.manifest.shards, paths, strict=True):
+                _check_digest(path, shard.digest, shard.digest_algorithm, crc32c_of)
+            index_files = {f.path: f for f in self.manifest.index_files}
+            if missing_files := {KEYS, INTERVALS} - index_files.keys():
+                raise StoreError(f'{self.root}: the manifest records no digest for {sorted(missing_files)}')
+            for name in (KEYS, INTERVALS):
+                entry = index_files[name]
+                _check_digest(_files.join(self.root, name), entry.digest, entry.digest_algorithm, crc32c_of)
         # One reader over every shard, in manifest order; record numbers run across them in that order.
         self._bundles = bagz.Reader(','.join(paths), _BUNDLE_OPTIONS)
         expected = sum(shard.records for shard in self.manifest.shards)

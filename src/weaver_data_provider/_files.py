@@ -9,9 +9,12 @@ client is used.
 from __future__ import annotations
 
 import base64
+import contextlib
+import functools
 import hashlib
 import pathlib
 import posixpath
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 import bagz
@@ -96,22 +99,7 @@ def crc32c_of_local(path: pathlib.Path) -> str:
     return h.digest().hex()
 
 
-def crc32c_of(path: str, storage_client: storage.Client | None = None) -> str:
-    """A file's crc32c: computed for a local file, read from object metadata on `gs://`.
-
-    crc32c rather than md5, because GCS records no md5 for a composite object, which is what
-    `gcloud storage cp` makes of a large upload.
-
-    Raises:
-        FileNotFoundError: If a `gs://` object does not exist.
-        ValueError: If a `gs://` object records no crc32c.
-    """
-    if not is_remote(path):
-        return crc32c_of_local(pathlib.Path(path))
-    check_readable(path)
-    from google.cloud import storage  # imported on first use, for the reason the TYPE_CHECKING import gives
-
-    client = storage_client if storage_client is not None else storage.Client()
+def _crc32c_of_object(path: str, client: storage.Client) -> str:
     bucket, _, name = path.removeprefix('gs://').partition('/')
     blob = client.bucket(bucket).get_blob(name)
     if blob is None:
@@ -119,3 +107,36 @@ def crc32c_of(path: str, storage_client: storage.Client | None = None) -> str:
     if blob.crc32c is None:
         raise ValueError(f'{path}: the object records no crc32c')
     return base64.b64decode(blob.crc32c).hex()
+
+
+def _crc32c_of_file(path: str) -> str:
+    return crc32c_of_local(pathlib.Path(path))
+
+
+@contextlib.contextmanager
+def crc32c_reader(root: str, storage_client: storage.Client | None) -> Iterator[Callable[[str], str]]:
+    """A function giving the crc32c of a file of the store or genome at `root`, for the length of one open.
+
+    Every file of an open is local when `root` is, and an object when `root` is under `gs://`. A local file's
+    crc32c is computed. An object's is read from its metadata: crc32c rather than md5, because GCS records no
+    md5 for a composite object, which is what `gcloud storage cp` makes of a large upload. The function
+    raises `FileNotFoundError` for an object that does not exist and `ValueError` for one that records no
+    crc32c.
+
+    Metadata is read through `storage_client` when one is handed in, and that client is left open. Without
+    one, the open gets a client for all of its files, closed when the block ends: each client looks up
+    credentials and opens a connection of its own, so a client per file repeats both for every file.
+
+    Raises:
+        ImportError: If `root` is remote, no client is handed in, and the `gcs` extra is not installed.
+    """
+    if not is_remote(root):
+        yield _crc32c_of_file
+    elif storage_client is not None:
+        yield functools.partial(_crc32c_of_object, client=storage_client)
+    else:
+        check_readable(root)
+        from google.cloud import storage  # imported on first use, for the reason the TYPE_CHECKING import gives
+
+        with contextlib.closing(storage.Client()) as client:
+            yield functools.partial(_crc32c_of_object, client=client)
